@@ -18,7 +18,7 @@ def fit_seeing(highres,lowres,wcs_hires,wcs_lowres,initpars=np.array([30.,0.7,6.
 
 def fit_seeing(highres,lowres,wcs_hires,wcs_lowres,init_norm=1.,init_fwhm=1.3,
                init_offset=0.,init_theta=0.,pixscale_highres=0.03,
-               fitbounds=[[8,25],[35,54]],parbounds=[[0.1,0.1],[30,4.]]):
+               fitbounds=[[8,25],[35,54]],parbounds=[[0.1,0.1],[30,4.]],**kwargs):
     """Fit a Gaussian 2D kernel to an HST image using the KCWI at lower resolution
 
     Parameters
@@ -62,7 +62,7 @@ def fit_seeing(highres,lowres,wcs_hires,wcs_lowres,init_norm=1.,init_fwhm=1.3,
 
     sol = optimize.least_squares(ef,initpars,bounds=parbounds,
             args =(highres,lowres,wcs_hires,wcs_lowres,pixscale_highres,
-                   np.array(fitbounds)))
+                   np.array(fitbounds)),**kwargs)
     return sol
 
 
