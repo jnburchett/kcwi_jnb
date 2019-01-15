@@ -24,7 +24,7 @@ def weight_mean_coadd(cubes, vars, stackwcs, varwcs, outfile=None,
 
 		sn = sumbright / np.sqrt(varbright)
 		#import pdb; pdb.set_trace()
-		print sn
+		print(sn)
 
 		if i==0:
 			combined = cc*sn
@@ -37,7 +37,7 @@ def weight_mean_coadd(cubes, vars, stackwcs, varwcs, outfile=None,
 	finaldat = combined/np.sum(levels)
 	finalvar = combvar / np.sum(levels**2)
 	
- 	newhdulist = stackwcs.to_fits()
+	newhdulist = stackwcs.to_fits()
 	newhdulist[0].data = finaldat
 	if air_to_vac is True:
 		dims = np.shape(cubes[0])

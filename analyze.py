@@ -1,13 +1,18 @@
-import numpy as np
-from astropy.wcs import WCS
-from astropy.io import fits
 import contVPmeasure as cvp
-
-
+import numpy as np
+from astropy.io import fits
+from astropy.wcs import WCS
+from astropy import units as u
+from astropy.coordinates import SkyCoord
 
 from kcwi_jnb import transform as kt
+from kcwi_jnb import utils as ku
+from kcwi_jnb.cube import DataCube
+from goodies import veltrans,closest
+from astropy.cosmology import Planck15 as cosmo
 
-def continuum_subtract(cubefile, varcube, wave1, wave2, outfile=None):
+def continuum_subtract(cubefile, varcube, wave1, wave2, outfile=None,
+                       normalize=False):
     """Fit continuum over a wavelength range in each spaxel and subtract
 
     Parameters
@@ -49,7 +54,10 @@ def continuum_subtract(cubefile, varcube, wave1, wave2, outfile=None):
             try:
                 contcoeff, contcovmtx = cvp.initcont(wavearr, thisspec, thisvar, wave1, wave2)
                 cont = cvp.evalcont(wavearr, contcoeff)
-                dat[:, idx0, idx1] = thisspec - cont
+                if normalize:
+                    dat[:, idx0, idx1] = thisspec / cont
+                else:
+                    dat[:, idx0, idx1] = thisspec - cont
             except:
                 dat[:, idx0, idx1] = 0
 
@@ -63,30 +71,36 @@ def median_continuum_subtract(cubefile, contwave1, contwave2,
                               linewave1, linewave2, outfile=None):
     """Find continuum by median flux value and subtract from line regiom
     """
-
+    from astropy.io import fits
     medhdu = kt.narrowband(cubefile, contwave1, contwave2, mode='median')
     linehdu = kt.slice_cube(cubefile, linewave1, linewave2)
 
-    wcs = WCS(medhdu[0].header)
     dat = linehdu[0].data - medhdu[0].data
     sumdat = np.sum(dat,axis=0)
 
     medhdu[0].data = sumdat
     if outfile is not None:
-        medhdu.writeto(outfile, overwrite=True)
+        try:
+            fits.writeto(data=medhdu[0].data, header=medhdu[0].header,
+                         filename=outfile, overwrite=True)
+            #medhdu.writeto(outfile, overwrite=True)
+        except:
+            import pdb; pdb.set_trace()
     return medhdu
 
 
-def extract_spectrum(cubefile,pixels,wvslice=None):
+def extract_spectrum(cube,pixels,wvslice=None):
 
     from linetools.spectra.xspectrum1d import XSpectrum1D
 
+    if isinstance(cube,str):
+        cube = DataCube(cube)
+
     if wvslice is not None:
-        thishdulist = kt.slice_cube(cubefile,wvslice[0],wvslice[1])
-        dat = thishdulist[0].data
-        hdr = thishdulist[0].header
-    else:
-        dat, hdr = fits.getdata(cubefile, header=True)
+        thishdulist = kt.slice_cube(cube,wvslice[0],wvslice[1])
+        cube = DataCube(thishdulist)
+
+    dat = cube.data
 
     # Get rid of NaNs
     dc = dat.copy()
@@ -102,13 +116,7 @@ def extract_spectrum(cubefile,pixels,wvslice=None):
     medspec = np.median(spaxels, axis=0)
 
     # Get the wavelength array
-    wcs = WCS(hdr)
-    dim = np.shape(dat)
-    wdelt = hdr['PC3_3']
-    lastwaveidx = dim[0] - 1
-    w1 = wcs.wcs_pix2world([[0, 0, 0]], 1)[0][2]
-    w2 = wcs.wcs_pix2world([[0, 0, lastwaveidx]], 1)[0][2]
-    newwavearr = np.arange(w1, w2, wdelt)
+    newwavearr = cube.wavelength
 
     # Create the spectrum
     try:
@@ -128,6 +136,36 @@ def radial_profile(data, center=None):
     nr = np.bincount(r.ravel())
     radialprofile = tbin / nr
     return radialprofile
+
+def position_velocity(cube,center,regionwidth=3.,regionextent=20.*u.kpc,
+                      velocitylimit=1000.,redshift = 0.6942,restwave=2796.3543):
+    velarr = veltrans(redshift,cube.wavelength,restwave)
+    cp = cube.wcs.wcs_world2pix([[center.ra.deg, center.dec.deg, 1]], 1)  # (ra,dec,lambda)
+    ### Get vertical pixel scale
+    cencoordsp1 = cube.wcs.wcs_pix2world([[cp[0][0], cp[0][1] + 1, cp[0][2]]], 1)
+    ccp1obj = SkyCoord(cencoordsp1[0][0], cencoordsp1[0][1], unit='deg')
+    print(center.separation(ccp1obj))
+    cencoordsp1 = cube.wcs.wcs_pix2world([[cp[0][0]+1, cp[0][1], cp[0][2]]], 1)
+    ccp1obj = SkyCoord(cencoordsp1[0][0], cencoordsp1[0][1], unit='deg')
+    print(center.separation(ccp1obj))
+    vertscale = center.separation(ccp1obj) * cosmo.kpc_proper_per_arcmin(redshift)
+    numpix = int(np.ceil(regionextent.to(u.kpc)/vertscale.to(u.kpc)))
+    hzoffset = np.ceil(regionwidth/2)
+    wv1 = cube.wavelength[closest(velarr,-velocitylimit)]
+    wv2 = cube.wavelength[closest(velarr,velocitylimit)]
+    specdata = []
+    offsetarr = np.arange(-numpix,numpix+1)
+    for i,ii in enumerate(offsetarr):
+        thesepixels=[[int(cp[0][1]+off),int(cp[0][0]+ii)] for off in
+                     np.arange(-hzoffset,hzoffset)]
+        thisspec = extract_spectrum(cube,thesepixels,wvslice=[wv1,wv2])
+        specdata.append(thisspec)
+    kpcoffset = offsetarr*vertscale.to(u.kpc).value
+    veloffset = veltrans(redshift,specdata[0].wavelength.value,restwave)
+    pvarr = np.array([sd.flux for sd in specdata])
+    return kpcoffset,veloffset,pvarr
+
+
 
 
 
