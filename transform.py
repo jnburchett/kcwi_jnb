@@ -10,6 +10,92 @@ from scipy.interpolate import RegularGridInterpolator
 from kcwi_jnb import utils as ku
 from kcwi_jnb.cube import DataCube
 
+def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCubes/',
+                       waverange=[4000.,5500.],slicer = 'M', write_aligned_nb=True,
+                       cube_prefix='newBrightOffset_',varcubelist=None):
+    import os
+
+    ### make narrowband output directory if necessary
+    if not os.path.isdir(outputdir_nb):
+        os.makedirs(outputdir_nb)
+
+    if isinstance(icubelist[0],DataCube):
+        pass
+    else:
+        cl = [DataCube(cc) for cc in icubelist]
+        icubelist = cl
+
+    ### prep variance cubes if provided
+    if varcubelist is not None:
+        if isinstance(varcubelist[0], DataCube):
+            pass
+        else:
+            vcl = [DataCube(cc) for cc in varcubelist]
+            varcubelist = vcl
+
+    ### create narrowband images
+    nbimages = []
+    for cube in icubelist:
+        nb = narrowband(cube, waverange[0], waverange[1],
+                                  outfile=outputdir_nb + 'nb_' + cube.filename.split('/')[-1])
+        nbimages.append(nb)
+    ### pick one of the narrowband images to use as reference
+    refnb = nbimages[0]
+    refdat = refnb[0].data
+    refwcs = WCS(refnb[0].header)
+    ### choose range of pixels appropriate for slicer
+    if slicer in ['M','medium','Medium']:
+        pixrange = [20, 79, 7, 29]
+    elif slicer in ['L','large','Large']:
+        pixrange = [16, 77, 4, 25]
+    ### perform the offset
+    for i, cube in enumerate(icubelist):
+        thisnbw = WCS(nbimages[i][0].header)
+        thisnbdat = nbimages[i][0].data
+        neww = change_coord_alignmax(refwcs, thisnbw, refdat,
+                                               thisnbdat,
+                                               range_mod=pixrange,
+                                               range_ref=pixrange)
+        cube.wcs.wcs.crval[0] = neww.wcs.crval[0]
+        cube.wcs.wcs.crval[1] = neww.wcs.crval[1]
+        cube.wcs.wcs.crpix[0] = neww.wcs.crpix[0]
+        cube.wcs.wcs.crpix[1] = neww.wcs.crpix[1]
+        if not os.path.isdir(outputdir_cubes):
+            os.makedirs(outputdir_cubes)
+        cube.write(outputdir_cubes+cube_prefix+cube.filename.split('/')[-1])
+        ### offset variance cube if provided
+        if varcubelist is not None:
+            vcube = varcubelist[i]
+            vcube.wcs.wcs.crval[0] = neww.wcs.crval[0]
+            vcube.wcs.wcs.crval[1] = neww.wcs.crval[1]
+            vcube.wcs.wcs.crpix[0] = neww.wcs.crpix[0]
+            vcube.wcs.wcs.crpix[1] = neww.wcs.crpix[1]
+            vcube.write(outputdir_cubes+cube_prefix+vcube.filename.split('/')[-1])
+        ### if desired, write out white light images from corrected cubes
+        if write_aligned_nb:
+            aligned_nb_outdir = outputdir_cubes+'nb/'
+            if not os.path.isdir(aligned_nb_outdir):
+                os.makedirs(aligned_nb_outdir)
+            narrowband(cube, waverange[0], waverange[1],
+                                 outfile=aligned_nb_outdir+'nb_' + cube.filename.split('/')[-1])
+        ##########
+        for i, cube in enumerate(varcubelist):
+            thisnbw = WCS(nbimages[i][0].header)
+            thisnbdat = nbimages[i][0].data
+            neww = change_coord_alignmax(refwcs, thisnbw, refdat,
+                                         thisnbdat,
+                                         range_mod=pixrange,
+                                         range_ref=pixrange)
+            cube.wcs.wcs.crval[0] = neww.wcs.crval[0]
+            cube.wcs.wcs.crval[1] = neww.wcs.crval[1]
+            cube.wcs.wcs.crpix[0] = neww.wcs.crpix[0]
+            cube.wcs.wcs.crpix[1] = neww.wcs.crpix[1]
+            if not os.path.isdir(outputdir_cubes):
+                os.makedirs(outputdir_cubes)
+            cube.write(outputdir_cubes + cube_prefix + cube.filename.split('/')[-1])
+    brightcoords = SkyCoord(neww.wcs.crval[0],neww.wcs.crval[1],unit='deg')
+    return brightcoords
+
 
 def align_cubes(cubelist, obj_align,interp_method='nearest'):
     ra_obj = obj_align.ra.deg
@@ -34,7 +120,7 @@ def align_cubes(cubelist, obj_align,interp_method='nearest'):
         cp = thisw.wcs_world2pix([[ra_obj, dec_obj, 1]], 1)  # (ra,dec,lambda)
         cenpixs.append(cp[0])
 
-        thisinterp = RegularGridInterpolator(inp, dat, method=interp_method,
+        thisinterp = RegularGridInterpolator((inp[0],inp[1],inp[2]), dat, method=interp_method,
                                              bounds_error=False)
         interps.append(thisinterp)
 
@@ -48,37 +134,35 @@ def align_cubes(cubelist, obj_align,interp_method='nearest'):
     ydiff = np.ceil(ymax - ymin)
 
     ### Generate new data cubes with bigger sizes but that will align
-    newcubedims = (cubedim[0], int(np.ceil(cubedim[1] + xdiff)), int(np.ceil(cubedim[2] + ydiff)))
+    ### Generate new data cubes with bigger sizes but that will align
+    newcubedims = (cubedim[0], int(cubedim[1] + xdiff), int((cubedim[2] + ydiff)))
     # Modify original header to put object coords in center
     newhdr = cube.header.copy()
     newhdr['CRVAL1'] = ra_obj
     newhdr['CRVAL2'] = dec_obj
-    newhdr['CRPIX1'] = (newcubedims[2] - 1) / 2.
-    newhdr['CRPIX2'] = (newcubedims[1] - 1) / 2.
+    newhdr['CRPIX1'] = (newcubedims[2] + 1.) / 2.
+    newhdr['CRPIX2'] = (newcubedims[1]) / 2.
     newwcs = WCS(newhdr)
-    #cube.wcs.wcs.crval[0] = ra_obj
-    #cube.wcs.wcs.crval[1] = dec_obj
-    #cube.wcs.wcs.crpix[0] = (newcubedims[2] - 1) / 2.
-    #cube.wcs.wcs.crpix[1] = (newcubedims[1] - 1) / 2.
-    #newwcs = cube.wcs.copy()
+
     newcubes = []
     # Find coordinates of each pixel in newcube
-    idxs = (np.arange(newcubedims[0]), np.arange(newcubedims[1]),
+    idxs = (np.arange(newcubedims[0])-1, np.arange(newcubedims[1]),
             np.arange(newcubedims[2]))
-    idxgrid = np.meshgrid(idxs[0], idxs[1], idxs[2])
-    coords = newwcs.wcs_pix2world(idxgrid[0], idxgrid[1], idxgrid[2], 1)
+    idxgrid = np.meshgrid(idxs[0], idxs[1], idxs[2],indexing='ij')
+    newcoords = newwcs.wcs_pix2world(idxgrid[2], idxgrid[1], idxgrid[0], 1)
 
     #pixs = newwcs.wcs_world2pix(coords[0], coords[1], coords[2], 1)
     #pixs = np.array(pixs)
 
     for i, terp in enumerate(interps):
         # What pixels in the old cube would correspond to the new cubes coords?
-        thiscubepix_newcoords = wobjs[i].wcs_world2pix(coords[0], coords[1], coords[2], 1)
+        thiscubepix_newcoords = wobjs[i].wcs_world2pix(
+            newcoords[0],newcoords[1], newcoords[2], 1)
         thiscubepix_newcoords = np.array(thiscubepix_newcoords)
+        tcp_nc_x, tcp_nc_y, tcp_nc_wave = thiscubepix_newcoords
         # What would the new pixel values and flux in the single cube be?
-        newflux = terp(thiscubepix_newcoords.T)
-        nf_trans = np.transpose(newflux, axes=[1, 2, 0])
-        newcubes.append(nf_trans)
+        newflux = terp((tcp_nc_wave, tcp_nc_y, tcp_nc_x))
+        newcubes.append(newflux)
 
     return newcubes, newwcs
 

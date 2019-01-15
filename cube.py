@@ -23,7 +23,7 @@ class DataCube(object):
     def write(self,filename):
         newhdu = self.wcs.to_fits()
         newhdu[0].data = self.data
-        newhdu.writeto(filename)
+        newhdu.writeto(filename,overwrite=True)
 
     def copy(self):
         return
