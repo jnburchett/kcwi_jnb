@@ -470,6 +470,7 @@ def subtract_gradient(nbimage, trim = [11,70,6,28], nonbgregion=[22,38,2,17],
     wcs = WCS(hdr)
     if trim is not None:
         dat = dat[trim[0]:trim[1],trim[2]:trim[3]]
+        wcs.wcs.crpix -= np.array([trim[2], trim[0]])
     # Fit the data using astropy.modeling
     p_init = models.Polynomial2D(degree=2)
     fit_p = fitting.LevMarLSQFitter()
@@ -481,7 +482,7 @@ def subtract_gradient(nbimage, trim = [11,70,6,28], nonbgregion=[22,38,2,17],
         # Ignore model linearity warning from the fitter
         warnings.simplefilter('ignore')
         p = fit_p(p_init, x, y, tofit)
-    wcs.wcs.crpix -= np.array([trim[2],trim[0]])
+
     dat -= p(x, y)
     
     if outfile is not None:
@@ -581,5 +582,14 @@ def convolve_reproject_cube(cube,basecube,pixscale=0.2,bounds=None,
     newwcs.wcs.cd = psmat
     cube.wcs = newwcs
     cube.data = np.array(newcubedata)
+    return cube
+
+def trim_cube(cube,y1=11,y2=70,x1=6,x2=28):
+    cube.data = cube.data[:,y1-1:y2-1,x1-1:x2-1]
+    crpix_old = cube.wcs.wcs.crpix
+
+    cube.wcs.wcs.crpix[0]=crpix_old[0]-(x1-1)
+    cube.wcs.wcs.crpix[1] = crpix_old[1]-(y1-1)
+
     return cube
 
