@@ -79,20 +79,21 @@ def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCub
             narrowband(cube, waverange[0], waverange[1],
                                  outfile=aligned_nb_outdir+'nb_' + cube.filename.split('/')[-1])
         ##########
-        for i, cube in enumerate(varcubelist):
-            thisnbw = WCS(nbimages[i][0].header)
-            thisnbdat = nbimages[i][0].data
-            neww = change_coord_alignmax(refwcs, thisnbw, refdat,
-                                         thisnbdat,
-                                         range_mod=pixrange,
-                                         range_ref=pixrange)
-            cube.wcs.wcs.crval[0] = neww.wcs.crval[0]
-            cube.wcs.wcs.crval[1] = neww.wcs.crval[1]
-            cube.wcs.wcs.crpix[0] = neww.wcs.crpix[0]
-            cube.wcs.wcs.crpix[1] = neww.wcs.crpix[1]
-            if not os.path.isdir(outputdir_cubes):
-                os.makedirs(outputdir_cubes)
-            cube.write(outputdir_cubes + cube_prefix + cube.filename.split('/')[-1])
+        if varcubelist is not None:
+            for i, cube in enumerate(varcubelist):
+                thisnbw = WCS(nbimages[i][0].header)
+                thisnbdat = nbimages[i][0].data
+                neww = change_coord_alignmax(refwcs, thisnbw, refdat,
+                                             thisnbdat,
+                                             range_mod=pixrange,
+                                             range_ref=pixrange)
+                cube.wcs.wcs.crval[0] = neww.wcs.crval[0]
+                cube.wcs.wcs.crval[1] = neww.wcs.crval[1]
+                cube.wcs.wcs.crpix[0] = neww.wcs.crpix[0]
+                cube.wcs.wcs.crpix[1] = neww.wcs.crpix[1]
+                if not os.path.isdir(outputdir_cubes):
+                    os.makedirs(outputdir_cubes)
+                cube.write(outputdir_cubes + cube_prefix + cube.filename.split('/')[-1])
     brightcoords = SkyCoord(neww.wcs.crval[0],neww.wcs.crval[1],unit='deg')
     return brightcoords
 
@@ -368,7 +369,7 @@ def trim3dwcs(wcs):
     return newwcs
     
 
-def narrowband(cube,wave1,wave2,outfile=None,mode='sum'):
+def narrowband(cube,wave1,wave2,outfile=None,mode='sum',varcube=None):
     from astropy.io import fits
     slicedhdu = slice_cube(cube,wave1,wave2)
     dat = slicedhdu[0].data
@@ -383,7 +384,34 @@ def narrowband(cube,wave1,wave2,outfile=None,mode='sum'):
     if outfile is not None:
         fits.writeto(data=slicedhdu[0].data,header=slicedhdu[0].header,
                      filename=outfile,overwrite=True)
+    if varcube is None:
+        return slicedhdu
+    else:
+        if outfile is not None:
+            erroutfile = outfile[:-5]+'_err.fits'
+            errhdu = narrowband_err(varcube,wave1,wave2,outfile=erroutfile)
+        else:
+            errhdu = narrowband_err(varcube, wave1, wave2, outfile=outfile)
+        return slicedhdu,errhdu
+
+
+def narrowband_err(varcube,wave1,wave2,outfile=None,mode='sum'):
+    from astropy.io import fits
+    slicedhdu = slice_cube(varcube,wave1,wave2)
+    dat = slicedhdu[0].data
+    if mode == 'sum':
+        imgdat = np.sqrt(np.sum(dat,axis=0))
+    elif mode == 'median':
+        imgdat = np.median(dat, axis=0)
+    else:
+        raise ValueError('Unknown combine type.')
+    slicedhdu[0].data=imgdat
+    slicedhdu[0].header = trim3dwcs(WCS(slicedhdu[0].header)).to_header()
+    if outfile is not None:
+        fits.writeto(data=slicedhdu[0].data,header=slicedhdu[0].header,
+                     filename=outfile,overwrite=True)
     return slicedhdu
+
 
 def apply_filter(cubefile,filter_curve,outfile=None,mode='sum'):
     from scipy.interpolate import interp1d

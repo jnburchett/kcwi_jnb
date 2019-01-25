@@ -35,7 +35,7 @@ def weight_mean_coadd(cubes, vars, stackwcs, varwcs, outfile=None,
 		levels[i]=sn
 
 	finaldat = combined/np.sum(levels)
-	finalvar = combvar / np.sum(levels**2)
+	finalvar = combvar / np.sum(levels)**2
 	
 	newhdulist = stackwcs.to_fits()
 	newhdulist[0].data = finaldat
