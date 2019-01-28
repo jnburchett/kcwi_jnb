@@ -165,7 +165,14 @@ def position_velocity(cube,center,regionwidth=3.,regionextent=20.*u.kpc,
     pvarr = np.array([sd.flux for sd in specdata])
     return kpcoffset,veloffset,pvarr
 
-
+def signif_cube(fluxcube, varcube,wave1,wave2,outfile=None):
+    nbhdu, errhdu = kt.narrowband(fluxcube,wave1,wave2,varcube=varcube)
+    signifdat = nbhdu[0].data/errhdu[0].data
+    newhdu = nbhdu.copy()
+    newhdu[0].data = signifdat
+    if outfile is not None:
+        newhdu.writeto(outfile,overwrite=True)
+    return newhdu
 
 
 
