@@ -18,13 +18,15 @@ def weight_mean_coadd(cubes, vars, stackwcs, varwcs, outfile=None,
 		varnonan = sumvar[(~np.isnan(sumdat)&(sumdat!=0))]
 		mednonan = np.median(datnonan)
 		stddev = np.std(datnonan)
-		bright = np.where(datnonan > (mednonan))[0]
+		bright = np.where((datnonan > (mednonan+stddev))&(datnonan>0))[0]
 		sumbright = np.sum(datnonan[bright])
 		varbright = np.sum(varnonan[bright])
+		cc[np.isnan(cc)] = 0.
+		var[np.isnan(var)] = 0.
 
 		sn = sumbright / np.sqrt(varbright)
 		#import pdb; pdb.set_trace()
-		print(sn)
+		print(sumbright,mednonan,stddev,sn)
 
 		if i==0:
 			combined = cc*sn
@@ -50,8 +52,10 @@ def weight_mean_coadd(cubes, vars, stackwcs, varwcs, outfile=None,
 		newspec.airtovac()
 		diffs = newspec.wavelength[1:]-newspec.wavelength[0:-1]
 		newhdulist[0].header['CRVAL3']=newspec.wvmin.value
+		newhdulist[0].header['CRPIX3'] = 1
 		newhdulist[0].header['CD3_3']=np.median(diffs.value)
 		newhdulist[0].header['PC3_3']=np.median(diffs.value)
+
 		newhdulist[0].header.set('CTYPE3','VAC','Vacuum wavelengths')
 		newhdulist[0].header['CUNIT3']='Angstrom'
 	if outfile is not None:
@@ -70,6 +74,7 @@ def weight_mean_coadd(cubes, vars, stackwcs, varwcs, outfile=None,
 		newspec.airtovac()
 		diffs = newspec.wavelength[1:] - newspec.wavelength[0:-1]
 		varhdulist[0].header['CRVAL3'] = newspec.wvmin.value
+		newhdulist[0].header['CRPIX3'] = 1
 		varhdulist[0].header['CD3_3'] = np.median(diffs.value)
 		varhdulist[0].header['PC3_3'] = np.median(diffs.value)
 		varhdulist[0].header.set('CTYPE3', 'VAC', 'Vacuum wavelengths')
@@ -95,6 +100,7 @@ def median_coadd(cubes, stackwcs, outfile=None, air_to_vac=True):
 		newspec.airtovac()
 		diffs = newspec.wavelength[1:]-newspec.wavelength[0:-1]
 		newhdulist[0].header['CRVAL3']=newspec.wvmin.value
+		newhdulist[0].header['CRPIX3'] = 1
 		newhdulist[0].header['CD3_3']=np.median(diffs.value)
 		newhdulist[0].header['PC3_3']=np.median(diffs.value)
 		newhdulist[0].header.set('CTYPE3','VAC','Vacuum wavelengths')

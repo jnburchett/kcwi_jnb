@@ -66,6 +66,15 @@ def continuum_subtract(cubefile, varcube, wave1, wave2, outfile=None,
         slicedhdu.writeto(outfile, overwrite=True)
     return slicedhdu
 
+def equiv_width(cubefile, varcube, contwave1, contwave2,
+                linewave1, linewave2, outfile=None):
+    """Calculate the equivalent width over some wavelength range
+    """
+    normcube = continuum_subtract(cubefile,varcube,contwave1,contwave2)
+
+
+
+
 
 def median_continuum_subtract(cubefile, contwave1, contwave2,
                               linewave1, linewave2, outfile=None):
@@ -75,13 +84,13 @@ def median_continuum_subtract(cubefile, contwave1, contwave2,
     medhdu = kt.narrowband(cubefile, contwave1, contwave2, mode='median')
     linehdu = kt.slice_cube(cubefile, linewave1, linewave2)
 
-    dat = linehdu[0].data - medhdu[0].data
+    dat = linehdu.data - medhdu.data
     sumdat = np.sum(dat,axis=0)
 
-    medhdu[0].data = sumdat
+    medhdu.data = sumdat
     if outfile is not None:
         try:
-            fits.writeto(data=medhdu[0].data, header=medhdu[0].header,
+            fits.writeto(data=medhdu.data, header=medhdu.header,
                          filename=outfile, overwrite=True)
             #medhdu.writeto(outfile, overwrite=True)
         except:
@@ -97,8 +106,8 @@ def extract_spectrum(cube,pixels,wvslice=None):
         cube = DataCube(cube)
 
     if wvslice is not None:
-        thishdulist = kt.slice_cube(cube,wvslice[0],wvslice[1])
-        cube = DataCube(thishdulist)
+        cube = kt.slice_cube(cube,wvslice[0],wvslice[1])
+
 
     dat = cube.data
 
@@ -167,11 +176,13 @@ def position_velocity(cube,center,regionwidth=3.,regionextent=20.*u.kpc,
 
 def signif_cube(fluxcube, varcube,wave1,wave2,outfile=None):
     nbhdu, errhdu = kt.narrowband(fluxcube,wave1,wave2,varcube=varcube)
-    signifdat = nbhdu[0].data/errhdu[0].data
+    signifdat = nbhdu[0].data/np.sqrt(errhdu[0].data)
     newhdu = nbhdu.copy()
     newhdu[0].data = signifdat
     if outfile is not None:
-        newhdu.writeto(outfile,overwrite=True)
+        fits.writeto(data=newhdu[0].data, header=newhdu[0].header,
+                     filename=outfile, overwrite=True)
+        #newhdu.writeto(outfile,overwrite=True)
     return newhdu
 
 

@@ -41,8 +41,8 @@ def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCub
         nbimages.append(nb)
     ### pick one of the narrowband images to use as reference
     refnb = nbimages[0]
-    refdat = refnb[0].data
-    refwcs = WCS(refnb[0].header)
+    refdat = refnb.data
+    refwcs = WCS(refnb.header)
     ### choose range of pixels appropriate for slicer
     if slicer in ['M','medium','Medium']:
         pixrange = [20, 79, 7, 29]
@@ -50,8 +50,8 @@ def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCub
         pixrange = [16, 77, 4, 25]
     ### perform the offset
     for i, cube in enumerate(icubelist):
-        thisnbw = WCS(nbimages[i][0].header)
-        thisnbdat = nbimages[i][0].data
+        thisnbw = WCS(nbimages[i].header)
+        thisnbdat = nbimages[i].data
         neww = change_coord_alignmax(refwcs, thisnbw, refdat,
                                                thisnbdat,
                                                range_mod=pixrange,
@@ -81,8 +81,11 @@ def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCub
         ##########
         if varcubelist is not None:
             for i, cube in enumerate(varcubelist):
-                thisnbw = WCS(nbimages[i][0].header)
-                thisnbdat = nbimages[i][0].data
+                try:
+                    thisnbw = WCS(nbimages[i].header)
+                except:
+                    import pdb; pdb.set_trace()
+                thisnbdat = nbimages[i].data
                 neww = change_coord_alignmax(refwcs, thisnbw, refdat,
                                              thisnbdat,
                                              range_mod=pixrange,
@@ -120,14 +123,20 @@ def align_cubes(cubelist, obj_align,interp_method='nearest'):
         wobjs.append(thisw)
         cp = thisw.wcs_world2pix([[ra_obj, dec_obj, 1]], 1)  # (ra,dec,lambda)
         cenpixs.append(cp[0])
-
-        thisinterp = RegularGridInterpolator((inp[0],inp[1],inp[2]), dat, method=interp_method,
+        try:
+            thisinterp = RegularGridInterpolator((inp[0],inp[1],inp[2]), dat, method=interp_method,
                                              bounds_error=False)
+        except:
+            import pdb; pdb.set_trace()
         interps.append(thisinterp)
 
     ### Must now figure out dimensions of new cube!
     cenpixs = np.array(cenpixs)
-    xmin = np.min(cenpixs[:, 0])
+    try:
+        xmin = np.min(cenpixs[:, 0])
+    except:
+        import pdb; pdb.set_trace()
+    #import pdb; pdb.set_trace()
     xmax = np.max(cenpixs[:, 0])
     ymin = np.min(cenpixs[:, 1])
     ymax = np.max(cenpixs[:, 1])
@@ -135,19 +144,18 @@ def align_cubes(cubelist, obj_align,interp_method='nearest'):
     ydiff = np.ceil(ymax - ymin)
 
     ### Generate new data cubes with bigger sizes but that will align
-    ### Generate new data cubes with bigger sizes but that will align
     newcubedims = (cubedim[0], int(cubedim[1] + xdiff), int((cubedim[2] + ydiff)))
     # Modify original header to put object coords in center
     newhdr = cube.header.copy()
     newhdr['CRVAL1'] = ra_obj
     newhdr['CRVAL2'] = dec_obj
     newhdr['CRPIX1'] = (newcubedims[2] + 1.) / 2.
-    newhdr['CRPIX2'] = (newcubedims[1]) / 2.
+    newhdr['CRPIX2'] = (newcubedims[1] + 1.) / 2.
     newwcs = WCS(newhdr)
 
     newcubes = []
     # Find coordinates of each pixel in newcube
-    idxs = (np.arange(newcubedims[0])-1, np.arange(newcubedims[1]),
+    idxs = (np.arange(newcubedims[0]+1), np.arange(newcubedims[1]+1),
             np.arange(newcubedims[2]))
     idxgrid = np.meshgrid(idxs[0], idxs[1], idxs[2],indexing='ij')
     newcoords = newwcs.wcs_pix2world(idxgrid[2], idxgrid[1], idxgrid[0], 1)
@@ -158,7 +166,7 @@ def align_cubes(cubelist, obj_align,interp_method='nearest'):
     for i, terp in enumerate(interps):
         # What pixels in the old cube would correspond to the new cubes coords?
         thiscubepix_newcoords = wobjs[i].wcs_world2pix(
-            newcoords[0],newcoords[1], newcoords[2], 1)
+            newcoords[0], newcoords[1], newcoords[2], 1)
         thiscubepix_newcoords = np.array(thiscubepix_newcoords)
         tcp_nc_x, tcp_nc_y, tcp_nc_wave = thiscubepix_newcoords
         # What would the new pixel values and flux in the single cube be?
@@ -345,7 +353,7 @@ def slice_cube(cube, wave1, wave2, outfile=None):
     newhdulist[0].data = datslice
     if outfile is not None:
         newhdulist.writeto(outfile, overwrite=True)
-    return newhdulist
+    return DataCube(newhdulist)
 
 def trim3dwcs(wcs):
     newwcs = WCS(naxis=2)
@@ -372,17 +380,17 @@ def trim3dwcs(wcs):
 def narrowband(cube,wave1,wave2,outfile=None,mode='sum',varcube=None):
     from astropy.io import fits
     slicedhdu = slice_cube(cube,wave1,wave2)
-    dat = slicedhdu[0].data
+    dat = slicedhdu.data
     if mode == 'sum':
         imgdat = np.sum(dat,axis=0)
     elif mode == 'median':
         imgdat = np.median(dat, axis=0)
     else:
         raise ValueError('Unknown combine type.')
-    slicedhdu[0].data=imgdat
-    slicedhdu[0].header = trim3dwcs(WCS(slicedhdu[0].header)).to_header()
+    slicedhdu.data=imgdat
+    slicedhdu.header = trim3dwcs(WCS(slicedhdu.header)).to_header()
     if outfile is not None:
-        fits.writeto(data=slicedhdu[0].data,header=slicedhdu[0].header,
+        fits.writeto(data=slicedhdu.data,header=slicedhdu.header,
                      filename=outfile,overwrite=True)
     if varcube is None:
         return slicedhdu
@@ -398,17 +406,17 @@ def narrowband(cube,wave1,wave2,outfile=None,mode='sum',varcube=None):
 def narrowband_err(varcube,wave1,wave2,outfile=None,mode='sum'):
     from astropy.io import fits
     slicedhdu = slice_cube(varcube,wave1,wave2)
-    dat = slicedhdu[0].data
+    dat = slicedhdu.data
     if mode == 'sum':
-        imgdat = np.sqrt(np.sum(dat,axis=0))
+        imgdat = np.sum(dat,axis=0)
     elif mode == 'median':
         imgdat = np.median(dat, axis=0)
     else:
         raise ValueError('Unknown combine type.')
-    slicedhdu[0].data=imgdat
-    slicedhdu[0].header = trim3dwcs(WCS(slicedhdu[0].header)).to_header()
+    slicedhdu.data=imgdat
+    slicedhdu.header = trim3dwcs(WCS(slicedhdu.header)).to_header()
     if outfile is not None:
-        fits.writeto(data=slicedhdu[0].data,header=slicedhdu[0].header,
+        fits.writeto(data=slicedhdu[0].data,header=slicedhdu.header,
                      filename=outfile,overwrite=True)
     return slicedhdu
 
@@ -440,7 +448,8 @@ def apply_filter(cubefile,filter_curve,outfile=None,mode='sum'):
     slicedhdu.writeto(outfile,overwrite=True)
     return slicedhdu
 
-def subtract_sky(scicube,varcube,suffix = 'sky.fits'):
+def subtract_sky(scicube,varcube,suffix = 'skysub.fits',return_sky=False,
+                 skysuffix='sky.fits'):
     # Collapse into narrowband
     buff = 200
     dat, hdr = fits.getdata(scicube, header=True)
@@ -456,18 +465,32 @@ def subtract_sky(scicube,varcube,suffix = 'sky.fits'):
     wcs = WCS(hdr)
     newhdulist=  wcs.to_fits()
     newhdulist[0].data=sub
-    newhdulist.writeto(scicube.split('/')[-1][:-6]+suffix,overwrite=True)
+    newhdulist.writeto(scicube.split('/')[-1][:-5]+suffix,overwrite=True)
 
 
     var, varhdr = fits.getdata(varcube, header=True)
-    varskytrans = var.transpose()+sky**2
-    varsky = varskytrans.transpose()
+    varsky = var
     wcs = WCS(varhdr)
     newhdulist = wcs.to_fits()
     newhdulist[0].data = varsky
-    newhdulist.writeto(varcube.split('/')[-1][:-6] + suffix, overwrite=True)
+    newhdulist.writeto(varcube.split('/')[-1][:-5] + suffix, overwrite=True)
 
-    return sub,varsky
+    if return_sky:
+        newhdulist = wcs.to_fits()
+        newhdulist[0].data = sky.transpose()
+        newhdulist.writeto(scicube.split('/')[-1][:-5] + skysuffix, overwrite=True)
+        return sub,varsky,sky
+    else:
+        return sub,varsky
+
+def subtract_master_sky(scicubes,mastersky,suffix='mskysub.fits'):
+    for i,sc in enumerate(scicubes):
+        cube = DataCube(sc)
+        cubedatsub = cube.data.transpose() - mastersky
+        cube.data = cubedatsub.transpose()
+        cube.write(sc.split('/')[-1][:-5]+'_'+suffix)
+
+
 
 def subtract_gradient(nbimage, trim = [11,70,6,28], nonbgregion=[22,38,2,17],
                       outfile=None):
@@ -516,7 +539,7 @@ def subtract_gradient(nbimage, trim = [11,70,6,28], nonbgregion=[22,38,2,17],
     if outfile is not None:
         newtrim = wcs.to_fits()
         newtrim[0].data = dat
-        newtrim.writeto(outfile)
+        newtrim.writeto(outfile,overwrite=True)
     return dat, wcs
     
     
@@ -612,12 +635,17 @@ def convolve_reproject_cube(cube,basecube,pixscale=0.2,bounds=None,
     cube.data = np.array(newcubedata)
     return cube
 
-def trim_cube(cube,y1=11,y2=70,x1=6,x2=28):
+def trim_cube(cube,y1=11,y2=70,x1=6,x2=28,outfile=None):
+    if isinstance(cube,str):
+        cube=DataCube(cube)
     cube.data = cube.data[:,y1-1:y2-1,x1-1:x2-1]
     crpix_old = cube.wcs.wcs.crpix
 
     cube.wcs.wcs.crpix[0]=crpix_old[0]-(x1-1)
     cube.wcs.wcs.crpix[1] = crpix_old[1]-(y1-1)
+
+    if outfile is not None:
+        cube.write(outfile)
 
     return cube
 
