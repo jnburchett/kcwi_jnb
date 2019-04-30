@@ -1,6 +1,7 @@
 import numpy as np
 from astropy.wcs import WCS
 from astropy.io import fits
+from astropy.coordinates import SkyCoord
 
 def load_file(inpfile):
     dat, hdr = fits.getdata(inpfile, header=True)
@@ -28,3 +29,17 @@ def get_wave_arr(dat,hdr,extract_wcs=True):
         newwavearr=newwavearr[:-1]
     #if len(newwavearr)!=len(dat)
     return newwavearr
+
+def bright_pix_coords(image,wcs,pixrange=None):
+    if pixrange is None:
+        maxref = np.max(image)
+    else:
+        maxref = np.max(image[pixrange[0]:pixrange[1], pixrange[2]:pixrange[3]])
+    maxrefpix = np.where(image == maxref)
+
+    ### Indices are returned in Y,X order and are zero indexed where pixels
+    ### start with 1 in the FITS standard
+    maxrefcoords = wcs.wcs_pix2world(maxrefpix[1][0] + 1, maxrefpix[0][0] + 1, 1)
+    maxrefcoords = SkyCoord(maxrefcoords[0], maxrefcoords[1], unit='deg')
+
+    return maxrefpix,maxrefcoords

@@ -1,5 +1,6 @@
 import numpy as np
 from astropy.convolution import Gaussian2DKernel
+from astropy.convolution import Gaussian1DKernel
 from astropy.convolution import convolve,convolve_fft
 from scipy import optimize
 from reproject import reproject_interp
@@ -9,7 +10,11 @@ from astropy.wcs import WCS
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy import units as u
+from linetools.spectra.xspectrum1d import XSpectrum1D
 from kcwi_jnb import transform
+from kcwi_jnb.cube import DataCube
+from kcwi_jnb import utils
+
 
 # Lines below tried a 2-parameter fit...took too long
 '''
@@ -207,18 +212,30 @@ def fit_seeing_cf(highres,lowres,wcs_hires,wcs_lowres,initpars=np.array([30.,0.7
                              sigma=sigma,args =(highres,data,wcs_hires,wcs_lowres))
     return sol
 
-def addWcsRtModel(inpfile,outfile,spatial_scale=0.2,zgal=0.6942,
+def addWcsRtModel(inp,ref,outfile,spatial_scale=0.2,zgal=0.6942,
                   center=('12 36 19.811', '+62 12 51.831'),PA=27):
 
     ### Load in the model file
-    rthdu = fits.open(inpfile)
-    rtdat = rthdu[0].data
-    wavearr = rthdu[1].data
+    inpdat = fits.open(inp)
+    rtcube = DataCube(inp,include_wcs=False)
+    rtcube.wavelength = inpdat[2].data
+    rtcube.data = inpdat[1].data
+    wavearr = rtcube.wavelength
+
+    ### Load in the reference file if necessary
+    if not isinstance(ref,DataCube):
+        refcube = DataCube(ref)
+    else:
+        refcube = inp
+    refdat = refcube.data
+    refwave = refcube.wavelength
+    nbhdu = transform.narrowband(refcube,4000.,5000.)
+    refnb = nbhdu.data
+    refwcs = WCS(nbhdu.header)
 
     ### Rearrange the cube
-    newdat = np.zeros((240, 300, 300))
-    for i in range(240):
-        newdat[i, :, :] = rtdat[:, :, i]
+    newdat= np.transpose(rtcube.data, axes=[2, 1, 0])
+
 
     ### Get the pixel scale in the spectral dimension
     diff = wavearr[1:]-wavearr[:-1]
@@ -230,20 +247,30 @@ def addWcsRtModel(inpfile,outfile,spatial_scale=0.2,zgal=0.6942,
     wave1 = wavearr[0]*(1.+zgal)
     spectral_scale *= (1.+zgal)
 
+    ### Get the bright pixel from reference cube
+    brightpix, brightcoords = utils.bright_pix_coords(refnb, refwcs)
+
     ### Create the new WCS
     newwcs = WCS(naxis=3)
-    spatscaledeg = spatial_scale * cosmo.arcsec_per_kpc_proper(0.6942) / 3600.
-    objcoords = SkyCoord(center[0],center[1],unit=(u.hourangle,u.deg))
+    spatscaledeg = spatial_scale * cosmo.arcsec_per_kpc_proper(zgal) / 3600.
+    print(spatscaledeg)
+    if center is not None:
+        cencoords = SkyCoord(center[0],center[1],unit=(u.hourangle,u.deg))
+    else:
+        cencoords = brightcoords
     newwcs.wcs.crpix = np.array([150.5, 150.5, 1])
-    newwcs.wcs.crval = np.array([objcoords.ra.deg, objcoords.dec.deg, wave1])
+    newwcs.wcs.crval = np.array([cencoords.ra.deg, cencoords.dec.deg, wave1])
     newwcs.wcs.cdelt = np.array([8.0226e-6, 8.0226e-6, spectral_scale])
     newwcs.wcs.cunit = ['deg', 'deg', 'Angstrom']
     newwcs.wcs.ctype = ('RA---TAN', 'DEC--TAN', 'VAC')
-    rotangle = np.radians(PA) # Assuming PA given in degress
+    rotangle = np.radians(PA) # Assuming PA given in degrees
     psmat = np.array([[newwcs.wcs.cdelt[0] * np.cos(rotangle), -newwcs.wcs.cdelt[1] * np.sin(rotangle), 0.],
                       [newwcs.wcs.cdelt[0] * np.sin(rotangle), newwcs.wcs.cdelt[1] * np.cos(rotangle), 0.],
                       [0., 0., 1.]])
     newwcs.wcs.cd = psmat
+
+
+
 
     newhdu = newwcs.to_fits()
     newhdu[0].header['PC3_3']=spectral_scale
@@ -312,6 +339,119 @@ def rtModelConvCut(contlumratio,globalnorm,inp,data,wcs_model, wcs_data,
     modelcut = transform.cutout(convdat, objcoords, size=[37, 15], wcs=wcs_data)
     modelcut.data[np.isnan(modelcut.data)]=0.
     return modelcut
+
+
+def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
+                      restlam=2796.35, dlam_rb=None,fmt=['lam','y','x'],
+                         return_cube=True):
+    '''Convolve and rebin a radiative transfer model cube in the spectral direction
+
+    Parameters
+    ----------
+    input : str or DataCube
+        Input filename or DataCube to convolve/rebin spectrally
+    outfil : str, optional
+        Output filename
+    specR : float, optional
+        Resolving power of spectrum
+    zgal : float, optional
+        Redshift of object
+    restlam : float, optional
+        Reference rest-frame wavelength for calculating kernel sigma
+    dlam_rb : float, optional
+        New wavelength bin size; if None, do not rebin
+    fmt : list, optional
+        Axis order of data cube, must have 'x', 'y', and 'lam' in some order
+    return_cube : bool, optional
+        If True, return DataCube object
+
+    Returns
+    -------
+    newwave : array
+        Wavelength vector (same as that of input cube if dlam_rb is None)
+    specconv_cube : 3D array
+        Datacube with convolved spaxels (spatial, spatial, spectral)
+    '''
+    from linetools.spectra.xspectrum1d import XSpectrum1D
+
+    dlam_obs = restlam * (1.0 + zgal) / specR
+    dlam_rest = dlam_obs / (1.0 + zgal)  # FWHM of resolution element in Angstroms
+
+    if isinstance(input,str):
+        ### Assume data format is as the output of
+        ### KR's read_spec_output.read_fullfits_conv_rebin()
+        hdu = fits.open(input)
+        data_pad = hdu[0].data  # Original data, just padded
+        cubedat = hdu[1].data  # Spatially convolved data
+        wave = hdu[2].data  # Wavelength array
+        nx, ny, nlam = cubedat.shape
+        cubewcs = None
+    else:
+        wave = input.wavelength / (1. + zgal)
+        cubedat = input.data
+        cubewcs = input.wcs
+
+    ### Establish dimensions of input cube
+    xs = fmt.index('x')
+    ys = fmt.index('y')
+    sp = fmt.index('lam')
+    cdims = cubedat.shape
+    nlam = cdims[sp]
+    nx = cdims[xs]
+    ny = cdims[ys]
+
+    ### Rearrange the cube (temporarily) : (y,x,lam)
+    cubedat_tp = np.transpose(cubedat, axes=[ys, xs, sp])
+    fmt_internal = ['y','x','lam']
+
+    ### Set up kernel to convolve spaxels
+    dwv = np.abs(wave[1] - wave[0])
+    fwhm_specpix = dlam_rest / dwv  # FWHM in number of pixels
+    stddev_specpix = fwhm_specpix / (2.0 * (2.0 * np.log(2.0)) ** 0.5)
+    spec_kernel = Gaussian1DKernel(stddev_specpix)
+
+    ### Rebin, if desired, and convolve
+    if dlam_rb is None:
+        specconv_cube = np.zeros((ny, nx, nlam))
+        newwave = wave
+        for spaxx in range(nx):
+            for spaxy in range(ny):
+                spax_spec = cubedat_tp[spaxy, spaxx, :]
+                conv_spec = convolve(spax_spec, spec_kernel, normalize_kernel=True)
+                specconv_cube[spaxy, spaxx, :] = conv_spec
+    else:
+        waveq = wave * u.Angstrom
+        newwave = np.arange(int(wave[0]),int(wave[-1]),dlam_rb) * u.Angstrom
+        specconv_cube = np.zeros((ny, nx, len(newwave)))
+        for spaxx in range(nx):
+            for spaxy in range(ny):
+                spax_spec = cubedat_tp[spaxy, spaxx, :]
+                conv_spec = convolve(spax_spec, spec_kernel, normalize_kernel=True)
+                # Use the linetools rebinning method
+                csX1d = XSpectrum1D(wave=waveq, flux = conv_spec)
+                cs_rb = csX1d.rebin(newwave)
+                try:
+                    specconv_cube[spaxy, spaxx, :] = cs_rb.flux
+                except:
+                    import pdb
+                    pdb.set_trace()
+
+    if cubewcs is not None:
+        cubewcs.wcs.pc[2,2] = dlam_rb  ### Probably shouldn't be hard-coded
+
+    ### Transpose back to input dimensions
+    axs = ['a']*3
+    for cc in fmt_internal:
+        axs[fmt.index(cc)] = fmt_internal.index(cc)
+    newdat = np.transpose(specconv_cube,axes=axs)
+
+    if return_cube:
+        newcube = DataCube(wavelength=newwave,data=newdat,
+                           include_wcs=cubewcs)
+        return newwave,newcube
+    else:
+        return newwave,specconv_cube
+
 
 
 def fitRtModel():

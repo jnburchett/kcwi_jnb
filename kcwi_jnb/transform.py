@@ -12,7 +12,8 @@ from kcwi_jnb.cube import DataCube
 
 def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCubes/',
                        waverange=[4000.,5500.],slicer = 'M', write_aligned_nb=True,
-                       cube_prefix='newBrightOffset_',varcubelist=None):
+                       cube_prefix='newBrightOffset_',varcubelist=None,
+                       pixrange=None):
     import os
 
     ### make narrowband output directory if necessary
@@ -44,7 +45,9 @@ def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCub
     refdat = refnb.data
     refwcs = WCS(refnb.header)
     ### choose range of pixels appropriate for slicer
-    if slicer in ['M','medium','Medium']:
+    if pixrange is not None:
+        pass
+    elif slicer in ['M','medium','Medium']:
         pixrange = [20, 79, 7, 29]
     elif slicer in ['L','large','Large']:
         pixrange = [16, 77, 4, 25]
@@ -118,6 +121,7 @@ def align_cubes(cubelist, obj_align,interp_method='nearest'):
 
         if i == 0:
             cubedim = np.shape(dat)
+            print(cubedim)
             inp = (np.arange(cubedim[0]), np.arange(cubedim[1]),
                    np.arange(cubedim[2]))
         wobjs.append(thisw)
@@ -155,10 +159,10 @@ def align_cubes(cubelist, obj_align,interp_method='nearest'):
 
     newcubes = []
     # Find coordinates of each pixel in newcube
-    idxs = (np.arange(newcubedims[0]+1), np.arange(newcubedims[1]+1),
+    idxs = (np.arange(newcubedims[0]), np.arange(newcubedims[1]),
             np.arange(newcubedims[2]))
     idxgrid = np.meshgrid(idxs[0], idxs[1], idxs[2],indexing='ij')
-    newcoords = newwcs.wcs_pix2world(idxgrid[2], idxgrid[1], idxgrid[0], 1)
+    newcoords = newwcs.wcs_pix2world(idxgrid[2]+1, idxgrid[1]+1, idxgrid[0], 1)
 
     #pixs = newwcs.wcs_world2pix(coords[0], coords[1], coords[2], 1)
     #pixs = np.array(pixs)
@@ -166,7 +170,7 @@ def align_cubes(cubelist, obj_align,interp_method='nearest'):
     for i, terp in enumerate(interps):
         # What pixels in the old cube would correspond to the new cubes coords?
         thiscubepix_newcoords = wobjs[i].wcs_world2pix(
-            newcoords[0], newcoords[1], newcoords[2], 1)
+            newcoords[0], newcoords[1], newcoords[2], 0)
         thiscubepix_newcoords = np.array(thiscubepix_newcoords)
         tcp_nc_x, tcp_nc_y, tcp_nc_wave = thiscubepix_newcoords
         # What would the new pixel values and flux in the single cube be?
@@ -339,15 +343,16 @@ def slice_cube(cube, wave1, wave2, outfile=None):
     if np.all(newwavearr<1e-3):
         newwavearr *= 1e10
     tokeep = np.where((newwavearr >= wave1) & (newwavearr <= wave2))[0]
-    try:
-        wslice = slice(tokeep[0], tokeep[-1]+1)
-    except:
-        import pdb; pdb.set_trace()
+    wslice = slice(tokeep[0], tokeep[-1]+1)
+
     sl2 = slice(0, np.shape(dat)[1])
     sl3 = slice(0, np.shape(dat)[2])
 
     datslice = dat[tokeep, :, :]
-    wcsslice = wcs.slice((wslice, sl2, sl3))
+    try:
+        wcsslice = wcs.slice((wslice, sl2, sl3))
+    except:
+        import pdb; pdb.set_trace()
 
     newhdulist = wcsslice.to_fits()
     newhdulist[0].data = datslice
@@ -416,7 +421,7 @@ def narrowband_err(varcube,wave1,wave2,outfile=None,mode='sum'):
     slicedhdu.data=imgdat
     slicedhdu.header = trim3dwcs(WCS(slicedhdu.header)).to_header()
     if outfile is not None:
-        fits.writeto(data=slicedhdu[0].data,header=slicedhdu.header,
+        fits.writeto(data=slicedhdu.data,header=slicedhdu.header,
                      filename=outfile,overwrite=True)
     return slicedhdu
 
@@ -429,23 +434,24 @@ def apply_filter(cubefile,filter_curve,outfile=None,mode='sum'):
     fc_interp = interp1d(filtcurve['wave'],filtcurve['throughput'])
     # Slice cube and get wavelength array
     slicedhdu = slice_cube(cubefile,filtcurve['wave'][0],filtcurve['wave'][-1])
-    cubedat = slicedhdu[0].data
-    newwavearr = ku.get_wave_arr(slicedhdu[0].data,slicedhdu[0].header)
+    cubedat = slicedhdu.data
+    newwavearr = ku.get_wave_arr(slicedhdu.data,slicedhdu.header)
     tpwave = fc_interp(newwavearr)
     transdat_tp = cubedat.T * tpwave
     imgdat = np.sum(transdat_tp.T,axis=0)
-    slicedhdu[0].data=imgdat
-    slicedhdu[0].header.remove('CRVAL3')
-    slicedhdu[0].header.remove('CRPIX3')
-    slicedhdu[0].header.remove('CDELT3')
-    slicedhdu[0].header.remove('CUNIT3')
-    slicedhdu[0].header.remove('CTYPE3')
+    slicedhdu.data=imgdat
+    slicedhdu.header.remove('CRVAL3')
+    slicedhdu.header.remove('CRPIX3')
+    slicedhdu.header.remove('CDELT3')
+    slicedhdu.header.remove('CUNIT3')
+    slicedhdu.header.remove('CTYPE3')
 
-    slicedhdu[0].header.remove('CNAME3')
-    slicedhdu[0].header.remove('PC3_3')
-    slicedhdu[0].header.set('NAXIS',2)
-    slicedhdu[0].header.set('WCSAXES',2)
-    slicedhdu.writeto(outfile,overwrite=True)
+    slicedhdu.header.remove('CNAME3')
+    slicedhdu.header.remove('PC3_3')
+    slicedhdu.header.set('NAXIS',2)
+    slicedhdu.header.set('WCSAXES',2)
+    if outfile is not None:
+        slicedhdu.write(outfile,overwrite=True)
     return slicedhdu
 
 def subtract_sky(scicube,varcube,suffix = 'skysub.fits',return_sky=False,
@@ -648,4 +654,43 @@ def trim_cube(cube,y1=11,y2=70,x1=6,x2=28,outfile=None):
         cube.write(outfile)
 
     return cube
+
+def convert_wavelength(cube,outfile=None):
+    from linetools.spectra.xspectrum1d import XSpectrum1D
+    dims = np.shape(cube.data[0])
+    lastwaveidx = np.max(dims) - 1
+    wave1 = cube.wcs.wcs_pix2world([[0, 0, 0]], 1)[0][2]
+    wave2 = cube.wcs.wcs_pix2world([[0, 0, lastwaveidx]], 1)[0][2]
+    import pdb; pdb.set_trace()
+    if wave1 > 1000.:
+        inc = 1.
+    else:
+        inc = 1e-10
+    newwavearr = np.arange(wave1, wave2 + inc, inc)
+    newspec = XSpectrum1D(newwavearr * inc, np.zeros_like(newwavearr))
+    newspec.meta['airvac'] = 'air'
+    newspec.airtovac()
+    diffs = newspec.wavelength[1:] - newspec.wavelength[0:-1]
+
+    # TODO: Come up with a way to keep the header info and WCS synced
+    cube.wcs.wcs.crval[2] = newspec.wvmin.value
+    cube.wcs.wcs.crpix[2] = 1.
+    cube.wcs.wcs.pc[2][2] = np.median(diffs.value)
+    newhdulist = cube.wcs.to_fits()
+    newhdulist[0].data = cube.data
+
+    newhdulist[0].header.set('CTYPE3', 'VAC', 'Vacuum wavelengths')
+    newhdulist[0].header['CUNIT3'] = 'Angstrom'
+    newhdulist[0].header['CD3_3'] = np.median(diffs.value)
+    # cube.header['CRPIX3'] = 1
+    # cube.header['PC3_3'] = np.median(diffs.value)
+    # cube.header['CRVAL3'] = newspec.wvmin.value
+
+    cube.header = newhdulist[0].header
+
+    #import pdb; pdb.set_trace()
+    if outfile is not None:
+        newhdulist.writeto(outfile, overwrite=True)
+
+
 

@@ -18,7 +18,8 @@ def weight_mean_coadd(cubes, vars, stackwcs, varwcs, outfile=None,
 		varnonan = sumvar[(~np.isnan(sumdat)&(sumdat!=0))]
 		mednonan = np.median(datnonan)
 		stddev = np.std(datnonan)
-		bright = np.where((datnonan > (mednonan+stddev))&(datnonan>0))[0]
+		#bright = np.where((datnonan > (mednonan+stddev))&(datnonan>0))[0]
+		bright = np.where((datnonan > (mednonan)) & (datnonan > 0))[0]
 		sumbright = np.sum(datnonan[bright])
 		varbright = np.sum(varnonan[bright])
 		cc[np.isnan(cc)] = 0.
