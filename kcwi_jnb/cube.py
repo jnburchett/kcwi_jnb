@@ -26,9 +26,13 @@ class DataCube(object):
             self.wavelength = wavelength
         elif include_wcs is True:
             self.wcs = wcs
-            self.wavelength = ku.get_wave_arr(dat,self.wcs,extract_wcs=False)
+            if len(np.shape(dat)) == 3:
+                self.wavelength = ku.get_wave_arr(dat,self.wcs,extract_wcs=False)
+            else:
+                self.wavelength = None
         else:
             self.wcs = include_wcs
+            self.header = self.wcs.to_header()
             if wavelength is None:
                 self.wavelength = ku.get_wave_arr(dat, self.wcs, extract_wcs=False)
             else:
@@ -42,4 +46,6 @@ class DataCube(object):
         newhdu.writeto(filename,overwrite=True)
 
     def copy(self):
-        return
+        newcube = DataCube(data=self.data.copy(), wavelength=self.wavelength.copy(), include_wcs=self.wcs.copy())
+        newcube.header = self.header.copy()
+        return newcube

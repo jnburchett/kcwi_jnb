@@ -212,7 +212,7 @@ def fit_seeing_cf(highres,lowres,wcs_hires,wcs_lowres,initpars=np.array([30.,0.7
                              sigma=sigma,args =(highres,data,wcs_hires,wcs_lowres))
     return sol
 
-def addWcsRtModel(inp,ref,outfile,spatial_scale=0.2,zgal=0.6942,
+def addWcsRtModel(inp,ref,outfile,spatial_scale_xy=[0.679,0.290],zgal=0.6942,
                   center=('12 36 19.811', '+62 12 51.831'),PA=27):
 
     ### Load in the model file
@@ -233,17 +233,22 @@ def addWcsRtModel(inp,ref,outfile,spatial_scale=0.2,zgal=0.6942,
     refnb = nbhdu.data
     refwcs = WCS(nbhdu.header)
 
-    ### Rearrange the cube
+    ### Rearrange the cube and find brightest pixel
     newdat= np.transpose(rtcube.data, axes=[2, 1, 0])
+    sumdat = np.sum(newdat,axis=0)
+    maxdat = np.max(sumdat)
+    brightmodpix = np.where(sumdat == maxdat)
+    print(brightmodpix)
 
 
     ### Get the pixel scale in the spectral dimension
     diff = wavearr[1:]-wavearr[:-1]
-    if not np.all(diff == diff[0]):
+    if not np.all(np.abs(diff-diff[0])<1e-3):
+        import pdb; pdb.set_trace()
         raise ValueError('Wavelength array not uniformly sampled')
     spectral_scale = diff[0]
 
-    ### Set scale and reference positions
+    ### Set scale and reference position in model
     wave1 = wavearr[0]*(1.+zgal)
     spectral_scale *= (1.+zgal)
 
@@ -252,15 +257,15 @@ def addWcsRtModel(inp,ref,outfile,spatial_scale=0.2,zgal=0.6942,
 
     ### Create the new WCS
     newwcs = WCS(naxis=3)
-    spatscaledeg = spatial_scale * cosmo.arcsec_per_kpc_proper(zgal) / 3600.
-    print(spatscaledeg)
+
     if center is not None:
         cencoords = SkyCoord(center[0],center[1],unit=(u.hourangle,u.deg))
     else:
         cencoords = brightcoords
-    newwcs.wcs.crpix = np.array([150.5, 150.5, 1])
+    # coordinates are (y, x, lam) and '1' indexed in FITS files
+    newwcs.wcs.crpix = np.array([brightmodpix[1][0]+1,brightmodpix[0][0]+1, 1])
     newwcs.wcs.crval = np.array([cencoords.ra.deg, cencoords.dec.deg, wave1])
-    newwcs.wcs.cdelt = np.array([8.0226e-6, 8.0226e-6, spectral_scale])
+    newwcs.wcs.cdelt = np.array([spatial_scale_xy[0]/3600., spatial_scale_xy[1]/3600., spectral_scale])
     newwcs.wcs.cunit = ['deg', 'deg', 'Angstrom']
     newwcs.wcs.ctype = ('RA---TAN', 'DEC--TAN', 'VAC')
     rotangle = np.radians(PA) # Assuming PA given in degrees
@@ -344,7 +349,7 @@ def rtModelConvCut(contlumratio,globalnorm,inp,data,wcs_model, wcs_data,
 def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
                       restlam=2796.35, dlam_rb=None,fmt=['lam','y','x'],
                          return_cube=True):
-    '''Convolve and rebin a radiative transfer model cube in the spectral direction
+    '''Convolve and rebin a radiatpive transfer model cube in the spectral direction
 
     Parameters
     ----------
@@ -365,6 +370,7 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
     return_cube : bool, optional
         If True, return DataCube object
 
+
     Returns
     -------
     newwave : array
@@ -374,8 +380,7 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
     '''
     from linetools.spectra.xspectrum1d import XSpectrum1D
 
-    dlam_obs = restlam * (1.0 + zgal) / specR
-    dlam_rest = dlam_obs / (1.0 + zgal)  # FWHM of resolution element in Angstroms
+    dlam_obs = restlam * (1.0 + zgal) / specR  # FWHM of resolution element in Angstroms
 
     if isinstance(input,str):
         ### Assume data format is as the output of
@@ -387,7 +392,7 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
         nx, ny, nlam = cubedat.shape
         cubewcs = None
     else:
-        wave = input.wavelength / (1. + zgal)
+        wave = input.wavelength
         cubedat = input.data
         cubewcs = input.wcs
 
@@ -406,7 +411,8 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
 
     ### Set up kernel to convolve spaxels
     dwv = np.abs(wave[1] - wave[0])
-    fwhm_specpix = dlam_rest / dwv  # FWHM in number of pixels
+    fwhm_specpix = dlam_obs / dwv  # FWHM in number of pixels
+    print('FWHM in pixels for convolution:',fwhm_specpix)
     stddev_specpix = fwhm_specpix / (2.0 * (2.0 * np.log(2.0)) ** 0.5)
     spec_kernel = Gaussian1DKernel(stddev_specpix)
 
@@ -417,6 +423,7 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
         for spaxx in range(nx):
             for spaxy in range(ny):
                 spax_spec = cubedat_tp[spaxy, spaxx, :]
+                #conv_spec = spax_spec # debugging convolution (make res too low?)
                 conv_spec = convolve(spax_spec, spec_kernel, normalize_kernel=True)
                 specconv_cube[spaxy, spaxx, :] = conv_spec
     else:
@@ -426,7 +433,10 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
         for spaxx in range(nx):
             for spaxy in range(ny):
                 spax_spec = cubedat_tp[spaxy, spaxx, :]
-                conv_spec = convolve(spax_spec, spec_kernel, normalize_kernel=True)
+                #conv_spec = spax_spec  # debugging convolution (make res too low?)
+                conv_spec = convolve(spax_spec, spec_kernel, normalize_kernel=True,
+                                     boundary='extend')
+
                 # Use the linetools rebinning method
                 csX1d = XSpectrum1D(wave=waveq, flux = conv_spec)
                 cs_rb = csX1d.rebin(newwave)
@@ -437,7 +447,7 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
                     pdb.set_trace()
 
     if cubewcs is not None:
-        cubewcs.wcs.pc[2,2] = dlam_rb  ### Probably shouldn't be hard-coded
+        cubewcs.wcs.pc[2,2] = dlam_rb
 
     ### Transpose back to input dimensions
     axs = ['a']*3
@@ -452,8 +462,67 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
     else:
         return newwave,specconv_cube
 
+def loadRtModel(biconeangle = 80,incline = 40,extent = 30,modeldir = 'BRP19_conv',
+                suffix = 'spec_conv1p6_rebinxy_wcstp_convspecrb.fits', filename=None):
+    '''Convolve and rebin a radiative transfer model cube in the spectral direction
+
+    Parameters
+    ----------
+    biconeangle : int
+        Opening angle of the biconical outflow: [10,30,45,60,80]
+    incline : int
+        Inclination angle of the disk relative to line of sight: [40,60,80]
+    extent : int
+        Outer extent of outflow (in kpc): [
+    Returns
+    -------
+    modelcube : DataCube
+        Radiative transfer model cube
+    '''
 
 
-def fitRtModel():
-    return
+    if modeldir[-1] != '/':
+        modeldir += '/'
+    if filename is not None:
+        try:
+            modelcube=DataCube('{}{}'.format(modeldir,filename))
+            return modelcube
+        except:
+            modelcube=DataCube(filename)
+            return modelcube
+        else:
+            raise ValueError('Model datacube file not found')
+
+    if extent != 30:
+        fname = '{}brp19_biconical{}_rw{}_disk_theta{}_{}'.format(modeldir,
+                                                                  biconeangle, extent, incline, suffix)
+    else:
+        fname = '{}brp19_biconical{}_disk_theta{}_{}'.format(modeldir,biconeangle,
+                                                             incline,suffix)
+    modelcube = DataCube(fname)
+    return modelcube
+
+def fitRtModel(model, data, variance, initpars=None, mode='linear',
+               **kwargs):
+    if initpars is None:
+        initpars = (1, 0.0025)
+
+    if mode == 'linear':
+        func = err_func_3d
+    else:
+        raise ValueError('Not prepared for that kind of function')
+    sol = optimize.least_squares(func, initpars,
+                                 args=(model,data,variance),**kwargs)
+    return sol
+
+def err_func_3d(a,model,data,err):
+    diff = (data-(a[0]*model+a[1]))/np.sqrt(err)
+    res = np.sqrt(np.sum(diff**2,(1,2)))
+    #res = diff
+    res = diff.flatten()
+    return res
+
+def residualDistribution(a, model, data):
+    diff = data-(a[0]*model+a[1])
+    return diff.flatten()
 

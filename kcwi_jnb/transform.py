@@ -13,7 +13,7 @@ from kcwi_jnb.cube import DataCube
 def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCubes/',
                        waverange=[4000.,5500.],slicer = 'M', write_aligned_nb=True,
                        cube_prefix='newBrightOffset_',varcubelist=None,
-                       pixrange=None):
+                       pixrange=None,trim=True,nb_subgrad=True):
     import os
 
     ### make narrowband output directory if necessary
@@ -34,23 +34,47 @@ def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCub
             vcl = [DataCube(cc) for cc in varcubelist]
             varcubelist = vcl
 
+
+    ### choose range of pixels appropriate for slicer
+
+    if slicer in ['M','medium','Medium']:
+        if pixrange is None:
+            pixrange = [20, 79, 7, 29]
+        trimrange = [20, 79, 7, 29]
+    elif slicer in ['L','large','Large']:
+        if pixrange is None:
+            pixrange = [16, 80, 4, 25]
+        trimrange = [16, 80, 4, 25]
+
+    ### trim cubes if desired
+    if trim is True:
+        tricubelist = []
+        trvcubelist = []
+        for i,cc in enumerate(icubelist):
+            tcube = trim_cube(cc, trimrange[0]+1,trimrange[1]+1,trimrange[2]+1,trimrange[3]+1)
+            vcube = trim_cube(varcubelist[i], trimrange[0]+1,trimrange[1]+1,trimrange[2]+1,trimrange[3]+1)
+            tricubelist.append(tcube)
+            trvcubelist.append(vcube)
+        icubelist = tricubelist
+        varcubelist = trvcubelist
+
     ### create narrowband images
     nbimages = []
     for cube in icubelist:
+        nbout = outputdir_nb + 'nb_' + cube.filename.split('/')[-1]
         nb = narrowband(cube, waverange[0], waverange[1],
-                                  outfile=outputdir_nb + 'nb_' + cube.filename.split('/')[-1])
-        nbimages.append(nb)
+                        outfile=nbout)
+        if nb_subgrad:
+            nbsubdat,nbsubwcs = subtract_gradient(nbout,degree=1,trim=None,outfile=nbout)
+            nbsub = DataCube(nbout)
+            nbimages.append(nbsub)
+        else:
+            nbimages.append(nb)
     ### pick one of the narrowband images to use as reference
     refnb = nbimages[0]
     refdat = refnb.data
     refwcs = WCS(refnb.header)
-    ### choose range of pixels appropriate for slicer
-    if pixrange is not None:
-        pass
-    elif slicer in ['M','medium','Medium']:
-        pixrange = [20, 79, 7, 29]
-    elif slicer in ['L','large','Large']:
-        pixrange = [16, 77, 4, 25]
+
     ### perform the offset
     for i, cube in enumerate(icubelist):
         thisnbw = WCS(nbimages[i].header)
@@ -82,24 +106,24 @@ def white_light_offset(icubelist,outputdir_nb='nb_off/',outputdir_cubes='corrCub
             narrowband(cube, waverange[0], waverange[1],
                                  outfile=aligned_nb_outdir+'nb_' + cube.filename.split('/')[-1])
         ##########
-        if varcubelist is not None:
-            for i, cube in enumerate(varcubelist):
-                try:
-                    thisnbw = WCS(nbimages[i].header)
-                except:
-                    import pdb; pdb.set_trace()
-                thisnbdat = nbimages[i].data
-                neww = change_coord_alignmax(refwcs, thisnbw, refdat,
-                                             thisnbdat,
-                                             range_mod=pixrange,
-                                             range_ref=pixrange)
-                cube.wcs.wcs.crval[0] = neww.wcs.crval[0]
-                cube.wcs.wcs.crval[1] = neww.wcs.crval[1]
-                cube.wcs.wcs.crpix[0] = neww.wcs.crpix[0]
-                cube.wcs.wcs.crpix[1] = neww.wcs.crpix[1]
-                if not os.path.isdir(outputdir_cubes):
-                    os.makedirs(outputdir_cubes)
-                cube.write(outputdir_cubes + cube_prefix + cube.filename.split('/')[-1])
+    if varcubelist is not None:
+        for i, cube in enumerate(varcubelist):
+            try:
+                thisnbw = WCS(nbimages[i].header)
+            except:
+                import pdb; pdb.set_trace()
+            thisnbdat = nbimages[i].data
+            neww = change_coord_alignmax(refwcs, thisnbw, refdat,
+                                         thisnbdat,
+                                         range_mod=pixrange,
+                                         range_ref=pixrange)
+            cube.wcs.wcs.crval[0] = neww.wcs.crval[0]
+            cube.wcs.wcs.crval[1] = neww.wcs.crval[1]
+            cube.wcs.wcs.crpix[0] = neww.wcs.crpix[0]
+            cube.wcs.wcs.crpix[1] = neww.wcs.crpix[1]
+            if not os.path.isdir(outputdir_cubes):
+                os.makedirs(outputdir_cubes)
+            cube.write(outputdir_cubes + cube_prefix + cube.filename.split('/')[-1])
     brightcoords = SkyCoord(neww.wcs.crval[0],neww.wcs.crval[1],unit='deg')
     return brightcoords
 
@@ -238,8 +262,11 @@ def change_coord_alignmax(wcsobj_ref,wcsobj_mod,refimage,modimage,
 
     if range_ref is None:   
         maxref = np.max(refcopy)
-    else: 
-        maxref = np.max(refcopy[range_ref[0]:range_ref[1],range_ref[2]:range_ref[3]])
+    else:
+        try:
+            maxref = np.max(refcopy[range_ref[0]:range_ref[1],range_ref[2]:range_ref[3]])
+        except:
+            import pdb; pdb.set_trace()
     maxrefpix = np.where(refcopy==maxref)
 
     ### Indices are returned in Y,X order and are zero indexed where pixels
@@ -253,6 +280,7 @@ def change_coord_alignmax(wcsobj_ref,wcsobj_mod,refimage,modimage,
     else:
         maxmod = np.max(modcopy[range_mod[0]:range_mod[1],range_mod[2]:range_mod[3]])
     maxmodpix = np.where(modcopy == maxmod)
+    print(maxmodpix)
 
     ### Create new WCS object where brightest pixels line up with ref coords
     newwcsobj = copy.deepcopy(wcsobj_mod)
@@ -332,6 +360,7 @@ def slice_cube(cube, wave1, wave2, outfile=None):
     -------
 
     """
+
     if isinstance(cube,str):
         cube = DataCube(cube)
         dat = cube.data
@@ -342,6 +371,7 @@ def slice_cube(cube, wave1, wave2, outfile=None):
     newwavearr = cube.wavelength
     if np.all(newwavearr<1e-3):
         newwavearr *= 1e10
+
     tokeep = np.where((newwavearr >= wave1) & (newwavearr <= wave2))[0]
     wslice = slice(tokeep[0], tokeep[-1]+1)
 
@@ -384,8 +414,10 @@ def trim3dwcs(wcs):
 
 def narrowband(cube,wave1,wave2,outfile=None,mode='sum',varcube=None):
     from astropy.io import fits
+
     slicedhdu = slice_cube(cube,wave1,wave2)
     dat = slicedhdu.data
+
     if mode == 'sum':
         imgdat = np.sum(dat,axis=0)
     elif mode == 'median':
@@ -393,7 +425,9 @@ def narrowband(cube,wave1,wave2,outfile=None,mode='sum',varcube=None):
     else:
         raise ValueError('Unknown combine type.')
     slicedhdu.data=imgdat
-    slicedhdu.header = trim3dwcs(WCS(slicedhdu.header)).to_header()
+    trimwcs = trim3dwcs(WCS(slicedhdu.header))
+    slicedhdu.wcs = trimwcs
+    slicedhdu.header = trimwcs.to_header()
     if outfile is not None:
         fits.writeto(data=slicedhdu.data,header=slicedhdu.header,
                      filename=outfile,overwrite=True)
@@ -489,17 +523,33 @@ def subtract_sky(scicube,varcube,suffix = 'skysub.fits',return_sky=False,
     else:
         return sub,varsky
 
-def subtract_master_sky(scicubes,mastersky,suffix='mskysub.fits'):
-    for i,sc in enumerate(scicubes):
-        cube = DataCube(sc)
+def subtract_master_sky(scicubes,mastersky,outdir = None,suffix='mskysub.fits'):
+
+    if type(scicubes) == list:
+        for i,sc in enumerate(scicubes):
+            if not isinstance(sc,DataCube):
+                cube = DataCube(sc)
+                rootfn = sc.split('/')[-1][:-5]
+            cubedatsub = cube.data.transpose() - mastersky
+            cube.data = cubedatsub.transpose()
+            if outdir is not None:
+                cube.write(outdir+rootfn+'_'+suffix)
+    else:
+        if not isinstance(scicubes, DataCube):
+            cube = DataCube(scicubes)
+            rootfn = scicubes.split('/')[-1][:-5]
+        else:
+            cube = scicubes
+            rootfn = ''
         cubedatsub = cube.data.transpose() - mastersky
         cube.data = cubedatsub.transpose()
-        cube.write(sc.split('/')[-1][:-5]+'_'+suffix)
-
+        if outdir is not None:
+            cube.write(outdir + rootfn + '_' + suffix)
+        return cube
 
 
 def subtract_gradient(nbimage, trim = [11,70,6,28], nonbgregion=[22,38,2,17],
-                      outfile=None):
+                      outfile=None,return_gradModel=False,degree=2,floor=None):
     """Subtract residual gradient of background from narrowband image
     
     Parameters
@@ -529,26 +579,38 @@ def subtract_gradient(nbimage, trim = [11,70,6,28], nonbgregion=[22,38,2,17],
         dat = dat[trim[0]:trim[1],trim[2]:trim[3]]
         wcs.wcs.crpix -= np.array([trim[2], trim[0]])
     # Fit the data using astropy.modeling
-    p_init = models.Polynomial2D(degree=2)
+    p_init = models.Polynomial2D(degree=degree)
     fit_p = fitting.LevMarLSQFitter()
     y, x = np.mgrid[:np.shape(dat)[0], :np.shape(dat)[1]]
     if nonbgregion is not None:
         tofit = np.ma.masked_array(dat, mask=np.zeros_like(dat))
         tofit[nonbgregion[0]:nonbgregion[1],nonbgregion[2]:nonbgregion[3]].mask = True
-    with warnings.catch_warnings():
+    else:
+        tofit = dat
+    #with warnings.catch_warnings():
         # Ignore model linearity warning from the fitter
-        warnings.simplefilter('ignore')
+     #   warnings.simplefilter('ignore')
+    try:
         p = fit_p(p_init, x, y, tofit)
-
-    dat -= p(x, y)
+    except:
+        import pdb; pdb.set_trace()
+    if floor is None:
+        dat -= p(x, y)
+    elif floor=='min':
+        dat -= (p(x, y)-np.min(p(x,y)))
+    else:
+        dat -= (p(x, y)-floor)
     
     if outfile is not None:
         newtrim = wcs.to_fits()
         newtrim[0].data = dat
         newtrim.writeto(outfile,overwrite=True)
-    return dat, wcs
-    
-    
+    if return_gradModel is True:
+        return dat, wcs, p(x,y)
+    else:
+        return dat, wcs
+
+
 
 
 
@@ -642,6 +704,22 @@ def convolve_reproject_cube(cube,basecube,pixscale=0.2,bounds=None,
     return cube
 
 def trim_cube(cube,y1=11,y2=70,x1=6,x2=28,outfile=None):
+    """Trim spatial dimensions of data cube and adjust WCS accordingly.
+
+    Parameters
+    ----------
+    cube : DataCube or str
+        Data cube to be trimmed
+    y1, y2, x1, x2 : int
+        Pixels to keep in trimmed cube (1-indexed as might be represented in DS9)
+    outfile : str, optional
+        File name to write to
+
+    Returns
+    -------
+    cube : DataCube
+        Trimmed data cube
+    """
     if isinstance(cube,str):
         cube=DataCube(cube)
     cube.data = cube.data[:,y1-1:y2-1,x1-1:x2-1]
@@ -654,6 +732,59 @@ def trim_cube(cube,y1=11,y2=70,x1=6,x2=28,outfile=None):
         cube.write(outfile)
 
     return cube
+
+def trim_cube_relpix(cube, cenpix, dx, dy, zeroindex = True,outfile=None,dims='yxz'):
+    """Trim spatial dimensions of data cube relative to some central pixel
+    and adjust WCS accordingly.
+
+    Parameters
+    ----------
+    cube : DataCube or str
+        Data cube to be trimmed
+    cenpix : tuple
+        Central pixel indices as (y,x)
+    dx : int
+        Number of pixels to keep in the x-direction
+    dy : int
+        Number of pixels to keep in the y-direction
+    zeroindex : bool, optional
+        If True, cenpix is true index of central pixel but 0-indexed array
+        If False, 1-indexed
+    outfile : str, optional
+        File name to write to
+
+    Returns
+    -------
+    cube : DataCube
+        Trimmed data cube
+    """
+    if isinstance(cube,str):
+        cube=DataCube(cube)
+
+    if not zeroindex:
+        cenpix[0] -= 1.
+        cenpix[1] -= 1.
+
+    if dims=='zyx':
+        cube.data = cube.data[:,cenpix[0][0]-dy+1:cenpix[0][0]+dy-1,
+                    cenpix[1][0]-dx+1:cenpix[1][0]+dx-1]
+    elif dims=='yxz':
+        cube.data = cube.data[cenpix[0][0] - dy + 1:cenpix[0][0] + dy - 1,
+                    cenpix[1][0] - dx + 1:cenpix[1][0] + dx - 1, :]
+    elif dims=='yx':
+        cube.data = cube.data[cenpix[0][0] - dy + 1:cenpix[0][0] + dy - 1,
+                    cenpix[1][0] - dx + 1:cenpix[1][0] + dx - 1]
+    crpix_old = cube.wcs.wcs.crpix
+
+    cube.wcs.wcs.crpix[0] = crpix_old[0] - (dx - 1)
+    cube.wcs.wcs.crpix[1] = crpix_old[1] - (dy - 1)
+
+    if outfile is not None:
+        cube.write(outfile)
+
+    return cube
+
+
 
 def convert_wavelength(cube,outfile=None):
     from linetools.spectra.xspectrum1d import XSpectrum1D
