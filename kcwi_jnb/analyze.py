@@ -7,6 +7,7 @@ from astropy.coordinates import SkyCoord
 from kcwi_jnb import transform as kt
 from kcwi_jnb.cube import DataCube
 from kcwi_jnb import spectral
+from kcwi_jnb.utils import veltrans,closest
 from astropy.cosmology import Planck15 as cosmo
 
 from linetools.lists.linelist import LineList
@@ -165,7 +166,10 @@ def median_continuum_subtract(cubefile, contwave1, contwave2,
 
 
 
-def extract_spectrum(cube,pixels,wvslice=None,method='median',varcube=None):
+def extract_spectrum(cube,pixels,wvslice=None,method='median',varcube=None, spatial_scale_xy=None):
+
+    ## KHRR: if spatial_scale_xy is not None, flux in units of cgs / sq. arcsec are assumed
+    ## This is now only implemented with the 'sum' method
 
     from linetools.spectra.xspectrum1d import XSpectrum1D
 
@@ -210,6 +214,23 @@ def extract_spectrum(cube,pixels,wvslice=None,method='median',varcube=None):
             spaxels=np.array(spaxels)
             extspec = np.mean(spaxels, axis=0)
             sigspec = -99. * np.ones(np.shape(dc)[0])
+    elif method == 'sum':
+        if np.shape(np.array(pixels))==(2,):
+            extspec = dc[:,pixels[0],pixels[1]]
+        else:
+            spaxels = []
+            for i,px in enumerate(pixels):
+                thisspec = dc[:,px[0],px[1]]
+                spaxels.append(thisspec)
+            spaxels=np.array(spaxels)
+            sigspec = -99. * np.ones(np.shape(dc)[0])
+
+            if spatial_scale_xy is None:
+                extspec = np.sum(spaxels, axis=0)
+            else:
+                spxsz = spatial_scale_xy[0] * spatial_scale_xy[1]
+                extspec = spxsz * np.sum(spaxels, axis=0)
+
     else:  # do the weighted mean
         vardat = varcube.data
         vdc = vardat.copy()
