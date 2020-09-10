@@ -74,4 +74,25 @@ def dist_from_center(cube,pix='all',center=None,physical=True,z=0.6942):
         sep = center.separation(ccpobj)
         return sep
 
+def closest(arr,value):
+    ''' Return index(indices) of array element closest to value(s))
+
+    Parameters
+    ----------
+    arr: 1D array
+        Array of values to be
+    value: float or 1D array-like
+        Values to search for in arr
+
+    Returns
+    -------
+    idx: int or list of int
+        Indices into arr of element(s) closest to value
+    '''
+    if (isinstance(value,int)|isinstance(value,float)):
+        idx = (np.abs(arr-value)).argmin()
+    else:
+        idx=[]
+        for val in value: idx.append((np.abs(arr-val)).argmin())
+    return idx
 
