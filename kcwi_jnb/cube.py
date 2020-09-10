@@ -40,10 +40,14 @@ class DataCube(object):
 
         self.filename = filename
 
-    def write(self,filename):
+    def write(self,filename,instrument='KCWI'):
         newhdu = self.wcs.to_fits()
         newhdu[0].data = self.data
-        newhdu.writeto(filename,overwrite=True)
+        newhdu[0].header['INSTRUME'] = 'KCWI'
+        try:
+            newhdu.writeto(filename,overwrite=True)
+        except:
+            import pdb; pdb.set_trace()
 
     def copy(self):
         newcube = DataCube(data=self.data.copy(), wavelength=self.wavelength.copy(), include_wcs=self.wcs.copy())

@@ -1,4 +1,3 @@
-import contVPmeasure as cvp
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -7,6 +6,7 @@ from astropy.coordinates import SkyCoord
 
 from kcwi_jnb import transform as kt
 from kcwi_jnb.cube import DataCube
+from kcwi_jnb import spectral
 from kcwi_jnb.utils import veltrans,closest
 from astropy.cosmology import Planck15 as cosmo
 
@@ -58,11 +58,6 @@ def continuum_subtract(cubefile, varcube, wave1, wave2, outfile=None,
     for i, idi in enumerate(idxs2iter):
         idx0 = idi[0][0]
         idx1 = idi[0][1]
-        #idx0=51
-        #idx1= 23
-        #if (np.abs(idx1-51)<2)&(np.abs(idx0-23)<2):
-        #import pdb;
-        #pdb.set_trace()
         thisspec = dat[:, idx0, idx1]
         thisvar = np.sqrt(var[:, idx0, idx1])
         if np.all(np.isnan(thisspec)):
@@ -71,8 +66,8 @@ def continuum_subtract(cubefile, varcube, wave1, wave2, outfile=None,
             try:
                 if len(wavearr)>len(thisspec):
                     wavearr=wavearr[:-1]
-                contcoeff, contcovmtx = cvp.initcont(wavearr, thisspec, thisvar, w1, w2)
-                cont = cvp.evalcont(wavearr, contcoeff)
+                contcoeff, contcovmtx = spectral.initcont(wavearr, thisspec, thisvar, w1, w2)
+                cont = spectral.evalcont(wavearr, contcoeff)
 
                 if flat_cont is not None:
                     cont = np.median(cont)
@@ -308,7 +303,7 @@ def radial_profile_angdist(data, var=None, radii=0.7, center=None):
 
 def position_velocity(cube,center,regionwidth=3.,regionextent=20.*u.kpc,
                       velocitylimit=1000.,redshift = 0.6942,restwave=2796.3543):
-    velarr = veltrans(redshift,cube.wavelength,restwave)
+    velarr = spectral.veltrans(redshift,cube.wavelength,restwave)
     cp = cube.wcs.wcs_world2pix([[center.ra.deg, center.dec.deg, 1]], 1)  # (ra,dec,lambda)
     ### Get vertical pixel scale
     cencoordsp1 = cube.wcs.wcs_pix2world([[cp[0][0], cp[0][1] + 1, cp[0][2]]], 1)
@@ -330,7 +325,7 @@ def position_velocity(cube,center,regionwidth=3.,regionextent=20.*u.kpc,
         thisspec = extract_spectrum(cube,thesepixels,wvslice=[wv1,wv2])
         specdata.append(thisspec)
     kpcoffset = offsetarr*vertscale.to(u.kpc).value
-    veloffset = veltrans(redshift,specdata[0].wavelength.value,restwave)
+    veloffset = spectral.veltrans(redshift,specdata[0].wavelength.value,restwave)
     pvarr = np.array([sd.flux for sd in specdata])
     return kpcoffset,veloffset,pvarr
 
