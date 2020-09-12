@@ -270,17 +270,27 @@ def radial_profile(data, center=None):
     radialprofile = tbin / nr
     return radialprofile
 
-def radial_profile_angdist(data, var=None, radii=0.7, center=None):
+def radial_profile_angdist(data, var=None, radii=0.7, center=None, \
+                           spatial_scale_xy=[0.679,0.290], units=None):
+
+    ## KHRR:now can specify if data is in units of cgs_per_arcsec2
+    ## If so, flux profile will come out in cgs
+    ## SB profile will come out in cgs per arcsec2
+    
+    pixarea = spatial_scale_xy[0] * spatial_scale_xy[1]
+    
     if center is None:
         center = np.where(data==np.max(data))
     ypix = np.arange(0,np.shape(data)[0])
     xpix = np.arange(0,np.shape(data)[1])
     dists = np.zeros(np.shape(data))
+    
     for i,xx in enumerate(xpix):
         for j,yy in enumerate(ypix):
-            xdist = np.abs(center[1]-xx)*0.7
-            ydist = np.abs(center[0]-yy)*0.3
+            xdist = np.abs(center[1]-xx)*spatial_scale_xy[0]
+            ydist = np.abs(center[0]-yy)*spatial_scale_xy[1]
             dists[j,i] = np.sqrt(xdist**2+ydist**2)
+            
     distarr = np.arange(0,np.max(xdist)+radii/2.,radii)
     fluxprofile = np.zeros(len(distarr))
     surfbright = np.zeros(len(distarr))
@@ -291,11 +301,24 @@ def radial_profile_angdist(data, var=None, radii=0.7, center=None):
             thesepix = np.where(dists<dd)
         else:
             thesepix = np.where((dists<dd)&(dists>distarr[i-1]))
-        fluxprofile[i] = np.sum(data[thesepix])
-        surfbright[i] = fluxprofile[i]/(len(thesepix[0])*0.21) #0.21 arcsec^2 is 1 pixel's area
+
+        if(units==None):
+            fluxprofile[i] = np.sum(data[thesepix])
+            surfbright[i] = fluxprofile[i]/(len(thesepix[0])*pixarea)
+        elif(units=='cgs_per_arcsec2'):
+            fluxprofile[i] = np.sum(data[thesepix] * pixarea) # Now has cgs units
+            surfbright[i] = fluxprofile[i]/(len(thesepix[0])*pixarea)            
+            
         if var is not None:
-            varsum[i] = np.sum(var[thesepix])
-            varsurfbright[i] = varsum[i]/(len(thesepix[0])*0.21)
+
+            if(units==None):
+                varsum[i] = np.sum(var[thesepix])
+                varsurfbright[i] = varsum[i] / (len(thesepix[0])*pixarea)**2
+                ## KHRR IS ADDING THE SQUARE ABOVE -- IS THIS CORRECT????
+            elif(units=='cgs_per_arcsec2'):
+                varsum[i] = np.sum(var[thesepix] * pixarea**2)
+                varsurfbright[i] = varsum[i] / (len(thesepix[0])*pixarea)**2
+            
     if var is not None:
         return distarr,fluxprofile,surfbright,varsum,varsurfbright
     else:
