@@ -10,6 +10,7 @@ from astropy.wcs import WCS
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy import units as u
+from astropy.cosmology import Planck15 as cosmo
 from linetools.spectra.xspectrum1d import XSpectrum1D
 from kcwi_jnb import transform
 from kcwi_jnb.cube import DataCube
@@ -164,6 +165,28 @@ def err_func_2d(pars,inp,data,wcs_hires,wcs_lowres,pixscale=0.03,
 
 def convolve_reproj(inp,norm,fwhm,data,wcs_hires,wcs_lowres,offset=None,pixscale=0.03,
                     bounds=np.array([[10,23],[37,52]]),inneroffset=None,angle=None):
+    """Say what this does
+
+        Parameters
+        ----------
+        wcs_hires : WCS
+            WCS of HST image
+        wcs_lowres : WCS
+            WCS of KCWI image
+        norm : float,optional
+            normalization factor; units??
+        fwhm : float or 2-element array,optional
+            seeing FWHM; if 2 elements, use asymmetric Gaussian; what are units??
+            looks like should be arcsec??
+
+
+        Returns
+        -------
+
+
+        """
+
+
     if isinstance(fwhm,float):
         numseepix = fwhm / pixscale
         kern = Gaussian2DKernel(numseepix / 2.355)  # FWHM = sigma * 2 sqrt(2.*ln(2))
@@ -204,6 +227,8 @@ def convolve_reproj(inp,norm,fwhm,data,wcs_hires,wcs_lowres,offset=None,pixscale
     else:
         return inpreproj
 
+
+
 def fit_seeing_cf(highres,lowres,wcs_hires,wcs_lowres,initpars=np.array([30.,0.7]),
            pixscale_highres=0.03,bounds=np.array([[10,23],[37,52]])):
     data = lowres[bounds[1,0]:bounds[1,1],bounds[0,0]:bounds[0,1]]
@@ -211,6 +236,8 @@ def fit_seeing_cf(highres,lowres,wcs_hires,wcs_lowres,initpars=np.array([30.,0.7
     sol = optimize.curve_fit(convolve_reproj,highres,data,p0=initpars,
                              sigma=sigma,args =(highres,data,wcs_hires,wcs_lowres))
     return sol
+
+
 
 def addWcsRtModel(inp,ref,outfile,spatial_scale_xy=[0.679,0.290],zgal=0.6942,
                   center=('12 36 19.811', '+62 12 51.831'),PA=27):
@@ -283,6 +310,8 @@ def addWcsRtModel(inp,ref,outfile,spatial_scale_xy=[0.679,0.290],zgal=0.6942,
 
     newhdu.writeto(outfile, overwrite=True)
 
+
+
 def rtModelErrFunc(pars, inp, data, wcs_model, wcs_data, pixscale=0.0273,
                    objcoords = SkyCoord('12 36 19.811', '+62 12 51.831',
                                         unit=(u.hourangle,u.deg)),
@@ -326,6 +355,7 @@ def rtModelErrFunc(pars, inp, data, wcs_model, wcs_data, pixscale=0.0273,
     diff = datacut.data[fb1:fb2,fb3:fb4] -  modelcut.data[fb1:fb2,fb3:fb4]
     return np.sum(diff**2)
 
+
 def rtModelConvCut(contlumratio,globalnorm,inp,data,wcs_model, wcs_data,
                    pixscale=0.0273,
                    objcoords = SkyCoord('12 36 19.811', '+62 12 51.831',
@@ -346,10 +376,122 @@ def rtModelConvCut(contlumratio,globalnorm,inp,data,wcs_model, wcs_data,
     return modelcut
 
 
-def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
-                      restlam=2796.35, dlam_rb=None,fmt=['lam','y','x'],
+def rtModel_spatialconv_rebin(infil, outfil,spatial_scale_xy=[0.679,0.290],zgal=0.6942,\
+                              sm_fwhm_arcsec=1.634, outroot=None):
+    '''Convolve radiative transfer model cube.  Originally from read_spec_output.read_fullfits_conv_rebin
+
+    Inputs
+    ------
+    infil : unprocessed RT model fits file (the cube to convolve)
+
+    outroot : str
+    Filename (before extension) of output file
+    '''
+
+    kpc_per_arcsec = cosmo.kpc_proper_per_arcmin(zgal).to(u.kpc / u.arcsec).value
+    sm_fwhm = sm_fwhm_arcsec * kpc_per_arcsec  # in kpc
+
+    #sm_fwhm = 7.209      # in kpc  -- 1" arcsec at z=0.6942
+    #sm_fwhm = 9.360      # in kpc  -- 1.277" arcsec at z=0.6942 (Planck15)
+    #sm_fwhm = 11.977  # in kpc  -- 1.634" arcsec at z=0.6942 (Planck15)
+
+
+    xobsbin = spatial_scale_xy[0] * kpc_per_arcsec     # in kpc -- about 0.7" arcsec at z=0.6942
+    yobsbin = spatial_scale_xy[1] * kpc_per_arcsec     # in kpc -- about 0.3" arcsec at z=0.6942
+
+
+    pad_factor = 1.0   # will use pad_factor * nx or pad_factor * ny to pad edges of the cube
+
+    if(infil==None):
+        infil = 'spec.fits'
+
+    if(outroot==None):
+        outroot = 'spec'
+
+    ### Declare filename directly instead
+    #outfil = outroot+'_conv_rebin.fits'
+
+    hdu = fits.open(infil)
+    data = hdu[0].data
+    wave = hdu[1].data
+    #dwv = np.abs(wave[1] - wave[0])
+    x_arr = hdu[2].data  # physical distance
+    dx = np.abs(x_arr[1] - x_arr[0])  # bin size in kpc
+
+    ny, nx, nlam = data.shape
+
+    # Make padded cube
+    pad_x = int(pad_factor * nx)
+    pad_y = int(pad_factor * ny)
+    data_pad = np.pad(data, ((pad_y,pad_y),(pad_x,pad_x),(0,0)), mode='constant', constant_values=0)
+    pny, pnx, pnlam = data_pad.shape
+    tot_extent = pnx*dx              # total extent of model plus pad in kpc
+
+
+    # Remove continuum source
+    #r_gal = 0.1      # extent of galaxy in kpc
+    #mid_idx = int(pnx/2)
+    #gal_sz = np.ceil(r_gal/dx)
+    #data_pad[int((mid_idx-gal_sz)):int((mid_idx+gal_sz)),int((mid_idx-gal_sz)):int((mid_idx+gal_sz)),:] = 0.0
+
+    # Define kernel
+    pix_fwhm = sm_fwhm / dx
+    pix_stddev = pix_fwhm / (2.0 * (2.0*np.log(2.0))**0.5)
+    kernel = Gaussian2DKernel(pix_stddev)
+
+    # Do we need to trim before rebinning (probably)
+    newshape_x = int(tot_extent / xobsbin)
+    newshape_y = int(tot_extent / yobsbin)
+    quot_x = pnx / newshape_x
+    quot_y = pny / newshape_y
+    if pnx % newshape_x != 0:
+        xtrimpx = pnx % newshape_x
+        xtr1 = int(xtrimpx/2)
+        slx = np.s_[xtr1:-(xtrimpx-xtr1)]
+    else:
+        slx = np.s_[:]
+    if pny % newshape_y != 0:
+        ytrimpx = pny % newshape_y
+        ytr1 = int(ytrimpx/2)
+        sly = np.s_[ytr1:-(ytrimpx-ytr1)]
+    else:
+        sly = np.s_[:]
+    data_pad = data_pad[sly,slx,:]
+    rb_conv_cube = np.zeros((newshape_y,newshape_x,pnlam))
+
+    # Convolve and rebin
+    # New dimensions must divide old ones
+    print("Dimension check -- ")
+    print("Original array is ", pnx, " by ", pny)
+    print("New shape is ", newshape_x, " by ", newshape_y)
+
+    for ilam in range(pnlam):
+        conv = convolve_fft(data_pad[:,:,ilam], kernel, normalize_kernel=True)
+        rb_conv_cube[:,:,ilam] = utils.bin_ndarray(conv, (newshape_y,newshape_x), operation='sum')
+        print("Convolving wavelength ", wave[ilam], "; index = ", ilam)
+
+    print("Transposing cube to (y,x,lam)")
+    rb_conv_cube = np.transpose(rb_conv_cube,axes=(1,0,2))
+
+    # Write fits file
+    hdulist = None
+    arr_list = [data_pad, rb_conv_cube, wave, dx]
+
+    for arr in arr_list:
+        if hdulist is None:
+            hdulist = fits.HDUList([fits.PrimaryHDU(arr)])
+        else:
+            hdulist.append(fits.ImageHDU(arr))
+
+    hdulist.writeto(outfil, overwrite=True)
+
+
+
+
+def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942, \
+                         restlam=2796.35, dlam_rb=None,fmt=['lam','y','x'], \
                          return_cube=True):
-    '''Convolve and rebin a radiatpive transfer model cube in the spectral direction
+    '''Convolve and rebin a radiative transfer model cube in the spectral direction
 
     Parameters
     ----------
@@ -462,6 +604,7 @@ def rtModel_conv_rb_spec(input, outfil=None, specR=1800., zgal=0.6942,
     else:
         return newwave,specconv_cube
 
+
 def loadRtModel(biconeangle = 80,incline = 40,extent = 30,modeldir = 'BRP19_conv',
                 suffix = 'spec_conv1p6_rebinxy_wcstp_convspecrb.fits', filename=None):
     '''Convolve and rebin a radiative transfer model cube in the spectral direction
@@ -502,6 +645,7 @@ def loadRtModel(biconeangle = 80,incline = 40,extent = 30,modeldir = 'BRP19_conv
     modelcube = DataCube(fname)
     return modelcube
 
+
 def fitRtModel(model, data, variance, initpars=None, mode='linear',
                **kwargs):
     if initpars is None:
@@ -515,12 +659,14 @@ def fitRtModel(model, data, variance, initpars=None, mode='linear',
                                  args=(model,data,variance),**kwargs)
     return sol
 
+
 def err_func_3d(a,model,data,err):
     diff = (data-(a[0]*model+a[1]))/np.sqrt(err)
     res = np.sqrt(np.sum(diff**2,(1,2)))
     #res = diff
     res = diff.flatten()
     return res
+
 
 def residualDistribution(a, model, data):
     diff = data-(a[0]*model+a[1])
